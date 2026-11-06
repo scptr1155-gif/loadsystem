@@ -982,11 +982,17 @@ local function main()
   S.GUI = GUI
 
   -- 4) beyaz paneli kur
-  panel = GUI.build({
+  local okBuild, panelOrErr = pcall(GUI.build, {
     username = getPlayerName(),
     onLogin = onLogin,
     onRegister = onRegister,
   })
+  if not okBuild or type(panelOrErr) ~= "table" then
+    boot.fail("ARAYUZ HATASI")
+    print("[loadsystem] panel hatasi: " .. tostring(panelOrErr))
+    return
+  end
+  panel = panelOrErr
 
   -- 5) siyah ekrani animasyonla kaldir
   sleep(0.45)
