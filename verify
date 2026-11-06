@@ -443,7 +443,8 @@ local function ghHeaders(token)
 end
 
 local function ghGetFile(path, token)
-  local url = API_BASE .. path .. "?ref=" .. BRANCH
+  -- "t" parametresi CDN onbellegini atlatir (yazma sonrasi bayat okuma olmasin)
+  local url = API_BASE .. path .. "?ref=" .. BRANCH .. "&t=" .. tostring(os.time())
   local ok, body, code = httpReq(url, "GET", nil, ghHeaders(token))
   if not ok then return nil, "HTTP " .. tostring(code) end
   local data = jsonDecode(body)
@@ -463,12 +464,12 @@ local function ghPutFile(path, content, sha, token, message)
     branch = BRANCH,
   })
   local ok, body, code = httpReq(API_BASE .. path, "PUT", payload, ghHeaders(token))
-  if not ok then return false, "HTTP " .. tostring(code) end
+  if not ok then return false, "HTTP " .. tostring(code), code end
   local data = jsonDecode(body)
   if type(data) == "table" and data.content and data.content.sha then
-    return true, data.content.sha
+    return true, data.content.sha, code
   end
-  return false, "beklenmeyen yan\u{0131}t"
+  return false, "beklenmeyen yan\u{0131}t", code
 end
 
 --------------------------------------------------------------
@@ -518,6 +519,16 @@ local function findPlayer(list, nick, pass)
     end
   end
   return nil
+end
+
+local function appendLine(content, line)
+  content = content or ""
+  if content == "" then
+    return line .. "\n"
+  elseif content:sub(-1) == "\n" then
+    return content .. line .. "\n"
+  end
+  return content .. "\n" .. line .. "\n"
 end
 
 local function nicknameTaken(list, nick)
@@ -833,13 +844,7 @@ local function onRegister(name, nick, pass)
 
   local content = info and info.content or ""
   local line = "player:" .. name .. "/playert:" .. nick .. "/password:" .. pass
-  if content == "" then
-    content = line .. "\n"
-  elseif content:sub(-1) == "\n" then
-    content = content .. line .. "\n"
-  else
-    content = content .. "\n" .. line .. "\n"
-  end
+  content = appendLine(content, line)
 
   local sha = info and info.sha or nil
   if not sha then
@@ -851,7 +856,15 @@ local function onRegister(name, nick, pass)
     return false, "Dosya bilgisi al\u{0131}namad\u{0131}."
   end
 
-  local wrote, werr = ghPutFile(FILE_PLAYER, content, sha, TOKEN, "loadsystem: add player " .. nick)
+  local wrote, werr, wcode = ghPutFile(FILE_PLAYER, content, sha, TOKEN, "loadsystem: add player " .. nick)
+  if not wrote and wcode == 409 then
+    -- sha cakismasi: dosya az once degismis olabilir -> yeniden oku ve tekrar dene
+    local re = ghGetFile(FILE_PLAYER, TOKEN)
+    if re then
+      local content2 = appendLine(re.content, line)
+      wrote, werr, wcode = ghPutFile(FILE_PLAYER, content2, re.sha, TOKEN, "loadsystem: add player " .. nick)
+    end
+  end
   if not wrote then
     return false, "Yazma hatas\u{0131}: " .. tostring(werr)
   end
