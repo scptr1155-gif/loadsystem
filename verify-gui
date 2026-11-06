@@ -23,28 +23,9 @@ local G = (type(getgenv) == "function" and getgenv()) or _G
 local S = G.__LOADSYS or {}
 G.__LOADSYS = S
 
-local function getService(name)
-  local ok, s = pcall(function() return game:GetService(name) end)
-  if ok and s then return s end
-  return nil
-end
-
-local Players        = getService("Players")
-local TweenService   = getService("TweenService")
-local CoreGui        = getService("CoreGui")
-
-local function attachGui(gui)
-  if CoreGui then
-    local ok = pcall(function() gui.Parent = CoreGui end)
-    if ok then return true end
-  end
-  local ok2 = pcall(function()
-    local lp = Players and Players.LocalPlayer
-    if not lp then error("LocalPlayer yok") end
-    gui.Parent = lp:WaitForChild("PlayerGui")
-  end)
-  return ok2
-end
+local Players        = game:GetService("Players")
+local TweenService   = game:GetService("TweenService")
+local CoreGui        = game:GetService("CoreGui")
 
 --------------------------------------------------------------
 -- Temel yardımcılar
@@ -178,14 +159,7 @@ local function makeField(parent, opts)
 
   local function refresh()
     local txt = box.Text or ""
-    if bullets then
-      local n = #txt
-      if type(utf8) == "table" and type(utf8.len) == "function" then
-        local okc, v = pcall(utf8.len, txt)
-        if okc and type(v) == "number" then n = v end
-      end
-      bullets.Text = string.rep(BULLET, n)
-    end
+    if bullets then bullets.Text = string.rep(BULLET, utf8.len(txt) or #txt) end
     ph.Visible = (txt == "")
   end
 
@@ -245,7 +219,7 @@ function M.build(opts)
     DisplayOrder = 900,
     ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
   })
-  attachGui(gui)
+  gui.Parent = CoreGui
 
   -- panel arkası gölge
   local shadow = new("Frame", {
