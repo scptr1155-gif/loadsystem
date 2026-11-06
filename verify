@@ -20,30 +20,9 @@ local G = (type(getgenv) == "function" and getgenv()) or _G
 local S = G.__LOADSYS or {}
 G.__LOADSYS = S
 
-local function getService(name)
-  local ok, s = pcall(function() return game:GetService(name) end)
-  if ok and s then return s end
-  return nil
-end
-
-local Players      = getService("Players")
-local TweenService = getService("TweenService")
-local CoreGui      = getService("CoreGui")
-
--- GUI ekranı: önce CoreGui, olmazsa PlayerGui (bazı executor'larda CoreGui kapalı olur)
-local function attachGui(gui)
-  if CoreGui then
-    local ok = pcall(function() gui.Parent = CoreGui end)
-    if ok then return true end
-  end
-  local ok2 = pcall(function()
-    local lp = Players and Players.LocalPlayer
-    if not lp then error("LocalPlayer yok") end
-    local pg = lp:WaitForChild("PlayerGui")
-    gui.Parent = pg
-  end)
-  return ok2
-end
+local Players      = game:GetService("Players")
+local TweenService = game:GetService("TweenService")
+local CoreGui      = game:GetService("CoreGui")
 
 --------------------------------------------------------------
 -- YAPILANDIRMA
@@ -310,41 +289,9 @@ end
 -- \u{015E}ifRELEME (GitHub PAT)
 -- Anahtar par\u{00E7}alar\u{0131} + XOR/ekleme katmanlar\u{0131} + CRC benzeri b\u{00FC}t\u{00FC}nl\u{00FC} kontrol\u{00FC}.
 --------------------------------------------------------------
--- Şifreleme (GitHub PAT)
--- DIKKAT: Luau'da native bitwise operatörler (& | ~ << >>) YOKTUR,
--- sadece `bit32` kütüphanesi vardır. Bu yüzden XOR elle uygulanır;
--- bit32 varsa o kullanılır, yoksa saf Lua fallback devreye girer.
---------------------------------------------------------------
-local U32 = 0xFFFFFFFF
-
-local function u32(x)
-  x = x % 4294967296
-  if x < 0 then x = x + 4294967296 end
-  return x
-end
-
-local BIT32 = (type(bit32) == "table") and bit32 or nil
-
--- 32-bit XOR
-local function bxor32(a, b)
-  if BIT32 and type(BIT32.bxor) == "function" then
-    return BIT32.bxor(u32(a), u32(b))
-  end
-  a, b = u32(a), u32(b)
-  local res, bitv = 0, 1
-  for _ = 1, 32 do
-    local ab, bb = a % 2, b % 2
-    if ab ~= bb then res = res + bitv end
-    a = (a - ab) / 2
-    b = (b - bb) / 2
-    bitv = bitv * 2
-  end
-  return res
-end
-
 local function mix32(seed, byte)
-  seed = bxor32(seed, byte)
-  seed = u32(seed * 31 + 0x9E3779B9)
+  seed = (seed ~ byte) & 0xFFFFFFFF
+  seed = ((seed * 31) + 0x9E3779B9) & 0xFFFFFFFF
   return seed
 end
 
@@ -365,11 +312,11 @@ local function keystream(key, n)
   local out = {}
   for i = 1, n do
     local x = state
-    x = bxor32(x, u32(x * 8192))         -- x << 13
-    x = bxor32(x, math.floor(x / 131072)) -- x >> 17
-    x = bxor32(x, u32(x * 32))           -- x << 5
-    state = u32(x)
-    out[i] = string.char(state % 256)
+    x = x ~ ((x << 13) & 0xFFFFFFFF)
+    x = x ~ (x >> 17)
+    x = x ~ ((x << 5) & 0xFFFFFFFF)
+    state = x & 0xFFFFFFFF
+    out[i] = string.char(state & 0xFF)
   end
   return table.concat(out)
 end
@@ -377,16 +324,15 @@ end
 local function decryptBlob(keyParts, blob)
   local key = table.concat(keyParts or {})
   if key == "" or not blob or blob == "" then return nil end
-  local enc = b64decode(blob)
-  if #enc < 5 then return nil end
-  local ks = keystream(key, #enc)
+  local raw = b64decode(blob)
+  if #raw < 5 then return nil end
+  local ks = keystream(key, #raw)
   local out = {}
-  for i = 1, #enc do
+  for i = 1, #raw do
     local kb = key:byte(((i - 1) % #key) + 1)
-    local off = (kb + (i - 1) * 7) % 256
-    local b = (enc:byte(i) - off) % 256
-    if b < 0 then b = b + 256 end
-    out[i] = string.char(bxor32(b, ks:byte(i)))
+    local b = (raw:byte(i) - ((kb + (i - 1) * 7) & 0xFF) + 256) & 0xFF
+    b = b ~ ks:byte(i)
+    out[i] = string.char(b)
   end
   local data = table.concat(out)
   local sb = data:sub(1, 4)
@@ -405,80 +351,65 @@ local function httpReq(url, method, body, headers)
   headers = headers or {}
   local lastErr = "bilinmeyen hata"
 
-  -- Farkli executor'lar farkli donus bicimleri kullanir; hepsini normalize et.
-  local function settle(code, txt)
-    if type(txt) ~= "string" then txt = tostring(txt or "") end
-    code = tonumber(code) or 0
-    if code >= 200 and code < 300 then return true, txt, code end
-    return false, txt, code
-  end
-
-  -- 1) request({Url=..., Method=..., Headers=..., Body=...})
   if type(request) == "function" then
     local ok, res = pcall(request, { Url = url, Method = method, Headers = headers, Body = body })
     if ok and type(res) == "table" then
-      local code = res.StatusCode or res.Status or res.code or res.status_code
-      local txt = res.Body or res.Content or res.body or res.text
-      return settle(code, txt)
+      local code = tonumber(res.StatusCode or res.Status or res.code or 0) or 0
+      local txt = res.Body or res.Content or res.body or ""
+      if type(txt) ~= "string" then txt = tostring(txt) end
+      if code >= 200 and code < 300 then return true, txt, code end
+      return false, txt, code
     elseif not ok then
       lastErr = tostring(res)
     end
   end
 
-  -- 2) http_request(url, method, headers, body)
   if type(http_request) == "function" then
     local ok, res = pcall(http_request, url, method, headers, body)
     if ok and type(res) == "table" then
-      local code = res.StatusCode or res.Status or res.code or res.status_code
-      local txt = res.Body or res.Content or res.body or res.text
-      return settle(code, txt)
+      local code = tonumber(res.StatusCode or res.Status or res.code or 0) or 0
+      local txt = res.Body or res.Content or res.body or ""
+      if type(txt) ~= "string" then txt = tostring(txt) end
+      if code >= 200 and code < 300 then return true, txt, code end
+      return false, txt, code
     elseif not ok then
       lastErr = tostring(res)
     end
   end
 
-  -- 3) syn.request({...}) -> tablo VEYA (body, code, headers)
   if type(syn) == "table" and type(syn.request) == "function" then
-    local ok, a, b = pcall(syn.request, { Url = url, Method = method, Headers = headers, Body = body })
-    if ok then
-      if type(a) == "table" then
-        local code = a.StatusCode or a.Status or a.code
-        local txt = a.Body or a.Content or a.body
-        return settle(code, txt)
-      elseif type(a) == "string" then
-        return settle(b, a)
-      end
-    else
-      lastErr = tostring(a)
+    local ok, res = pcall(syn.request, { Url = url, Method = method, Headers = headers, Body = body })
+    if ok and type(res) == "table" then
+      local code = tonumber(res.StatusCode or res.Status or 0) or 0
+      local txt = res.Body or res.Content or ""
+      if type(txt) ~= "string" then txt = tostring(txt) end
+      if code >= 200 and code < 300 then return true, txt, code end
+      return false, txt, code
     end
   end
 
-  -- 4) http.get(url)
   if type(http) == "table" and type(http.get) == "function" then
     local ok, res = pcall(http.get, url)
-    if ok and res ~= nil then
-      if type(res) == "table" then
-        local code = res.StatusCode or res.Status or res.code
-        local txt = res.Body or res.Content or res.body
-        return settle(code, txt)
-      elseif type(res) == "string" then
-        return settle(200, res)
-      end
-    elseif not ok then
-      lastErr = tostring(res)
+    if ok and res then
+      local code = tonumber(res.StatusCode or res.Status or 0) or 0
+      local txt = res.Body or res.Content or ""
+      if type(txt) ~= "string" then txt = tostring(txt) end
+      if code >= 200 and code < 300 then return true, txt, code end
+      return false, txt, code
     end
   end
 
-  -- 5) Son care: oyun ici HttpService
+  -- Son \u{00E7}are: oyun i\u{00E7}i i\u{00E7}inde HttpService
   local okSvc, svc = pcall(function() return game:GetService("HttpService") end)
   if okSvc and svc then
     local ok, res = pcall(function()
       return svc:RequestAsync({ Url = url, Method = method, Headers = headers, Body = body })
     end)
     if ok and res then
-      local code = res.StatusCode or res.code or 0
-      local txt = res.Body or res.Content or ""
-      return settle(code, txt)
+      local code = tonumber(res.StatusCode or 0) or 0
+      local txt = res.Body or ""
+      if code >= 200 and code < 300 then return true, txt, code end
+      return false, txt, code
     elseif not ok then
       lastErr = tostring(res)
     end
@@ -539,17 +470,6 @@ local function ghPutFile(path, content, sha, token, message)
     return true, data.content.sha, code
   end
   return false, "beklenmeyen yan\u{0131}t", code
-end
-
---------------------------------------------------------------
--- REPO DOSYASI (once API: CDN cache'i yok, anlik guncel; hata olursa ham dosya)
---------------------------------------------------------------
-local function fetchRepoFile(path, token)
-  local info = ghGetFile(path, token)
-  if info and type(info.content) == "string" and #info.content > 0 then
-    return info.content
-  end
-  return fetchText(RAW_BASE .. path .. "?t=" .. tostring(os.time()))
 end
 
 --------------------------------------------------------------
@@ -645,7 +565,7 @@ local function buildBoot()
   gui.IgnoreGuiInset = true
   gui.DisplayOrder = 999
   gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-  attachGui(gui)
+  gui.Parent = CoreGui
 
   local bg = Instance.new("Frame")
   bg.Name = "Background"
@@ -830,15 +750,8 @@ local TOKEN = nil
 local panel = nil
 
 local function loadChunk(code, label)
-  if type(code) ~= "string" or code == "" then return nil, "bos kod" end
-  local chunk, err
-  if type(loadstring) == "function" then
-    chunk, err = loadstring(code, label)
-  elseif type(load) == "function" then
-    chunk, err = load(code, label)
-  else
-    return nil, "loadstring bulunamadi"
-  end
+  if type(loadstring) ~= "function" then return nil, "loadstring bulunamadi" end
+  local chunk, err = loadstring(code)
   if not chunk then return nil, tostring(err) end
   local ok, mod = pcall(chunk)
   if not ok then return nil, tostring(mod) end
@@ -853,17 +766,6 @@ local function waitFor(cond, timeout)
     waited = waited + 0.1
   end
   return cond()
-end
-
--- Kaydedilecek değerlerde "(" ")" gibi karakterler olmasın (satır formatı bozulmasın)
-local function sanitize(s)
-  s = tostring(s or "")
-  s = s:gsub("[%(%)%[%]%{%}<>%\"'`]", "")
-  s = s:gsub("[\r\n\t]", " ")
-  s = s:gsub("%s+", " ")
-  s = s:gsub("^%s+", "")
-  s = s:gsub("%s+$", "")
-  return s
 end
 
 local function validate(name, nick, pass)
@@ -888,7 +790,7 @@ local function proceedToMainMenu(session)
 
   local function attempt()
     curtain.setText("LOADING MAIN MENU", "ARAYUZ YUKLENIYOR")
-    local code, err = fetchRepoFile(FILE_MENU, TOKEN)
+    local code, err = fetchText(RAW_BASE .. FILE_MENU)
     if not code then
       curtain.error("MAIN MENU YUKLENEMEDI")
       return
@@ -934,13 +836,6 @@ local function onRegister(name, nick, pass)
   if not TOKEN or TOKEN == "" then
     return false, "Sunucu eri\u{015F}imi yok (API anahtar\u{0131} \u{00E7}\u{00F6}z\u{00FC}lemedi)."
   end
-
-  name = sanitize(name)
-  nick = sanitize(nick)
-  pass = sanitize(pass)
-  if name == "" then return false, "Oyuncu adı bulunamadı." end
-  if nick == "" then return false, "Takma ad boş olamaz." end
-  if pass == "" then return false, "Şifre boş olamaz." end
 
   local list, info = readPlayers(TOKEN)
   if nicknameTaken(list, nick) then
@@ -993,7 +888,7 @@ local function main()
 
   -- 2) arayuzu indir
   boot.setText("LOADING", "ARAYUZ INDIRILIYOR")
-  local code, err = fetchRepoFile(FILE_GUI, TOKEN)
+  local code, err = fetchText(RAW_BASE .. FILE_GUI)
   if not code then
     boot.fail("ARAYUZ YUKLENEMEDI")
     return
@@ -1008,32 +903,20 @@ local function main()
   S.GUI = GUI
 
   -- 4) beyaz paneli kur
-  local okBuild, panelOrErr = pcall(GUI.build, {
+  panel = GUI.build({
     username = getPlayerName(),
     onLogin = onLogin,
     onRegister = onRegister,
   })
-  if not okBuild or type(panelOrErr) ~= "table" then
-    boot.fail("ARAYUZ HATASI")
-    print("[loadsystem] panel hatasi: " .. tostring(panelOrErr))
-    return
-  end
-  panel = panelOrErr
 
   -- 5) siyah ekrani animasyonla kaldir
   sleep(0.45)
   pcall(function() GUI.dismissBoot() end)
 end
 
-local okBoot, errBoot = pcall(main)
-if not okBoot then
-  pcall(function()
-    if S.boot and S.boot.fail then S.boot.fail("SISTEM HATASI") end
-  end)
-  print("[loadsystem] hata: " .. tostring(errBoot))
-end
+spawn(main)
 
 return {
-  version = "1.1.0",
+  version = "1.0.0",
   session = function() return S.SESSION end,
 }
