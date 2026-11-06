@@ -405,65 +405,80 @@ local function httpReq(url, method, body, headers)
   headers = headers or {}
   local lastErr = "bilinmeyen hata"
 
+  -- Farkli executor'lar farkli donus bicimleri kullanir; hepsini normalize et.
+  local function settle(code, txt)
+    if type(txt) ~= "string" then txt = tostring(txt or "") end
+    code = tonumber(code) or 0
+    if code >= 200 and code < 300 then return true, txt, code end
+    return false, txt, code
+  end
+
+  -- 1) request({Url=..., Method=..., Headers=..., Body=...})
   if type(request) == "function" then
     local ok, res = pcall(request, { Url = url, Method = method, Headers = headers, Body = body })
     if ok and type(res) == "table" then
-      local code = tonumber(res.StatusCode or res.Status or res.code or 0) or 0
-      local txt = res.Body or res.Content or res.body or ""
-      if type(txt) ~= "string" then txt = tostring(txt) end
-      if code >= 200 and code < 300 then return true, txt, code end
-      return false, txt, code
+      local code = res.StatusCode or res.Status or res.code or res.status_code
+      local txt = res.Body or res.Content or res.body or res.text
+      return settle(code, txt)
     elseif not ok then
       lastErr = tostring(res)
     end
   end
 
+  -- 2) http_request(url, method, headers, body)
   if type(http_request) == "function" then
     local ok, res = pcall(http_request, url, method, headers, body)
     if ok and type(res) == "table" then
-      local code = tonumber(res.StatusCode or res.Status or res.code or 0) or 0
-      local txt = res.Body or res.Content or res.body or ""
-      if type(txt) ~= "string" then txt = tostring(txt) end
-      if code >= 200 and code < 300 then return true, txt, code end
-      return false, txt, code
+      local code = res.StatusCode or res.Status or res.code or res.status_code
+      local txt = res.Body or res.Content or res.body or res.text
+      return settle(code, txt)
     elseif not ok then
       lastErr = tostring(res)
     end
   end
 
+  -- 3) syn.request({...}) -> tablo VEYA (body, code, headers)
   if type(syn) == "table" and type(syn.request) == "function" then
-    local ok, res = pcall(syn.request, { Url = url, Method = method, Headers = headers, Body = body })
-    if ok and type(res) == "table" then
-      local code = tonumber(res.StatusCode or res.Status or 0) or 0
-      local txt = res.Body or res.Content or ""
-      if type(txt) ~= "string" then txt = tostring(txt) end
-      if code >= 200 and code < 300 then return true, txt, code end
-      return false, txt, code
+    local ok, a, b = pcall(syn.request, { Url = url, Method = method, Headers = headers, Body = body })
+    if ok then
+      if type(a) == "table" then
+        local code = a.StatusCode or a.Status or a.code
+        local txt = a.Body or a.Content or a.body
+        return settle(code, txt)
+      elseif type(a) == "string" then
+        return settle(b, a)
+      end
+    else
+      lastErr = tostring(a)
     end
   end
 
+  -- 4) http.get(url)
   if type(http) == "table" and type(http.get) == "function" then
     local ok, res = pcall(http.get, url)
-    if ok and res then
-      local code = tonumber(res.StatusCode or res.Status or 0) or 0
-      local txt = res.Body or res.Content or ""
-      if type(txt) ~= "string" then txt = tostring(txt) end
-      if code >= 200 and code < 300 then return true, txt, code end
-      return false, txt, code
+    if ok and res ~= nil then
+      if type(res) == "table" then
+        local code = res.StatusCode or res.Status or res.code
+        local txt = res.Body or res.Content or res.body
+        return settle(code, txt)
+      elseif type(res) == "string" then
+        return settle(200, res)
+      end
+    elseif not ok then
+      lastErr = tostring(res)
     end
   end
 
-  -- Son \u{00E7}are: oyun i\u{00E7}i i\u{00E7}inde HttpService
+  -- 5) Son care: oyun ici HttpService
   local okSvc, svc = pcall(function() return game:GetService("HttpService") end)
   if okSvc and svc then
     local ok, res = pcall(function()
       return svc:RequestAsync({ Url = url, Method = method, Headers = headers, Body = body })
     end)
     if ok and res then
-      local code = tonumber(res.StatusCode or 0) or 0
-      local txt = res.Body or ""
-      if code >= 200 and code < 300 then return true, txt, code end
-      return false, txt, code
+      local code = res.StatusCode or res.code or 0
+      local txt = res.Body or res.Content or ""
+      return settle(code, txt)
     elseif not ok then
       lastErr = tostring(res)
     end
