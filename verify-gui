@@ -265,7 +265,7 @@ function M.build(opts)
     Size = UDim2.new(1, -40, 0, 20),
     Position = UDim2.fromOffset(20, 68),
     BackgroundTransparency = 1,
-    Text = "HESAP DO\u{0113}RULAMASI GEREK\u{0130}YOR",
+    Text = "HESAP DO\u{011E}RULAMASI GEREK\u{0130}YOR",
     TextColor3 = C.muted,
     TextSize = 12,
     Font = Enum.Font.GothamMedium,
