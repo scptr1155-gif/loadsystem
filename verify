@@ -1,1 +1,909 @@
+--[[
+  verify  |  LOAD SYSTEM — ANA KOD (v1.0)
+  =========================================================
+  Bu dosya sistemin giri\u{0131} noktas\u{0131}d\u{0131}r.
 
+  Ak\u{0131}\u{015f}:
+    1. T\u{00FC}m ekran siyah olur, ortada "LOADING" yazar.
+    2. `verify-gui` dosyas\u{0131} indirilip \u{00E7}al\u{0131}\u{015f}t\u{0131}r (beyaz panel + formlar).
+    3. Beyaz panel a\u{00E7}\u{0131}ld\u{0131}ktan sonra siyah ekran animasyonla kaybolur.
+    4. Oyuncu LOGIN veya CREATE ACCOUNT ile giri\u{015F} yapar.
+    5. Oyuncu bilgileri GitHub'daki `player` dosyas\u{0131}na yaz\u{0131}l\u{0131}r.
+    6. Beyaz panel kapan\u{0131}r -> siyah perde a\u{00E7}\u{0131}l\u{0131}r -> `main-menu` y\u{00FC}klenir.
+    7. main-menu ger\u{00E7}ekten \u{00E7}al\u{0131}\u{015F}ma ba\u{015F}lay\u{0131}nca siyah perde kalkar.
+
+  Bu dosya tek ba\u{015F}\u{0131}ms\u{0131}z \u{00E7}al\u{0131}\u{015F}mak i\u{00E7}in kendi
+  HTTP / Base64 / JSON / \u{015F}ifreleme katman\u{0131}n\u{0131} i\u{00E7}inde bar\u{0131}nd\u{0131}r\u{0130}.
+]]
+
+local G = (type(getgenv) == "function" and getgenv()) or _G
+local S = G.__LOADSYS or {}
+G.__LOADSYS = S
+
+local Players      = game:GetService("Players")
+local TweenService = game:GetService("TweenService")
+local CoreGui      = game:GetService("CoreGui")
+
+--------------------------------------------------------------
+-- YAPILANDIRMA
+--------------------------------------------------------------
+local REPO_OWNER = "scptr1155-gif"
+local REPO_NAME  = "loadsystem"
+local BRANCH     = "main"
+local RAW_BASE   = "https://raw.githubusercontent.com/" .. REPO_OWNER .. "/" .. REPO_NAME .. "/refs/heads/" .. BRANCH .. "/"
+local API_BASE   = "https://api.github.com/repos/" .. REPO_OWNER .. "/" .. REPO_NAME .. "/contents/"
+
+local FILE_GUI    = "verify-gui"
+local FILE_MENU   = "main-menu"
+local FILE_PLAYER = "player"
+
+-- \u{015E}ifreli GitHub API anahtar\u{0131} (PAT). D\u{00FCz metni dahildir, sadece \u{0130}\u{00E7}ilmi\u{015F} hali tutulur.
+-- Yeni bir PAT almak i\u{00E7}in:  python3 gen.py --pat <PAT> --patch verify
+local CIPHER = {
+  KEY = { "l0ad", "-sys::", "v1::", "9x4q" },
+  BLOB = "du3Pn818Zyp4cDY3pTAjkeEilbc6GnT+EcIzVgYBDqtVqoIL7eX60w7yydbOo2PM+dDzFq1RRSw9bm2EyNmNYq9PvPDfLkzbL1Qr5/w1G3UBK4Qckj2HmdvxzFmbDJFNdQ==",
+}
+
+--------------------------------------------------------------
+-- YARDIMCI: ZAMAN
+--------------------------------------------------------------
+local function sleep(s)
+  s = s or 0
+  if type(task) == "table" and type(task.wait) == "function" then task.wait(s)
+  elseif type(wait) == "function" then wait(s) end
+end
+
+local function spawn(fn, ...)
+  if type(task) == "table" and type(task.spawn) == "function" then return task.spawn(fn, ...)
+  end
+  local co = coroutine.create(fn)
+  coroutine.resume(co, ...)
+  return co
+end
+
+--------------------------------------------------------------
+-- BASE64 (saf Lua)
+--------------------------------------------------------------
+local B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+local B64MAP = {}
+for i = 1, #B64 do B64MAP[B64:sub(i, i)] = i - 1 end
+
+local function b64encode(data)
+  local out = {}
+  local n = #data
+  for i = 1, n, 3 do
+    local b1, b2, b3 = data:byte(i, i + 2)
+    local v = (b1 or 0) * 65536 + (b2 or 0) * 256 + (b3 or 0)
+    local c1 = math.floor(v / 262144) % 64
+    local c2 = math.floor(v / 4096) % 64
+    local c3 = math.floor(v / 64) % 64
+    local c4 = v % 64
+    out[#out + 1] = B64:sub(c1 + 1, c1 + 1) .. B64:sub(c2 + 1, c2 + 1)
+    out[#out + 1] = (b2 and B64:sub(c3 + 1, c3 + 1)) or "="
+    out[#out + 1] = (b3 and B64:sub(c4 + 1, c4 + 1)) or "="
+  end
+  return table.concat(out)
+end
+
+local function b64decode(data)
+  data = data:gsub("%s+", "")
+  local out = {}
+  local buf, bits = 0, 0
+  for i = 1, #data do
+    local ch = data:sub(i, i)
+    if ch ~= "=" then
+      local v = B64MAP[ch]
+      if v then
+        buf = buf * 64 + v
+        bits = bits + 6
+        if bits >= 8 then
+          bits = bits - 8
+          out[#out + 1] = string.char(math.floor(buf / (2 ^ bits)) % 256)
+          buf = buf % (2 ^ bits)
+        end
+      end
+    end
+  end
+  return table.concat(out)
+end
+
+--------------------------------------------------------------
+-- JSON (saf Lua)
+--------------------------------------------------------------
+local function jsonEscape(s)
+  s = tostring(s)
+  s = s:gsub("\\", "\\\\"):gsub('"', '\\"')
+  s = s:gsub("\n", "\\n"):gsub("\r", "\\r"):gsub("\t", "\\t")
+  s = s:gsub("[\1-\31]", function(c)
+    return string.format("\\u%04x", string.byte(c))
+  end)
+  return s
+end
+
+local function jsonEncode(v)
+  local t = type(v)
+  if v == nil then return "null" end
+  if t == "boolean" then return tostring(v) end
+  if t == "number" then
+    if v == math.floor(v) and math.abs(v) < 1e15 then return string.format("%d", v) end
+    return string.format("%.14g", v)
+  end
+  if t == "string" then return '"' .. jsonEscape(v) .. '"' end
+  if t == "table" then
+    local count, max, isArray = 0, 0, true
+    for k in pairs(v) do
+      if type(k) ~= "number" then isArray = false break end
+      count = count + 1
+      if k > max then max = k end
+    end
+    if isArray and count == max then
+      local parts = {}
+      for i = 1, max do parts[i] = jsonEncode(v[i]) end
+      return "[" .. table.concat(parts, ",") .. "]"
+    end
+    local keys = {}
+    for k in pairs(v) do keys[#keys + 1] = tostring(k) end
+    table.sort(keys)
+    local parts = {}
+    for _, k in ipairs(keys) do
+      local val = v[k]
+      if val == nil then val = v[tonumber(k) or 0] end
+      parts[#parts + 1] = '"' .. jsonEscape(k) .. '":' .. jsonEncode(val)
+    end
+    return "{" .. table.concat(parts, ",") .. "}"
+  end
+  return "null"
+end
+
+local function jsonDecode(str)
+  if type(str) ~= "string" then return nil end
+  local pos, len = 1, #str
+
+  local function skipWs()
+    while pos <= len do
+      local c = str:sub(pos, pos)
+      if c == " " or c == "\t" or c == "\n" or c == "\r" then pos = pos + 1 else break end
+    end
+  end
+
+  local function utf8Char(cp)
+    if cp < 0x80 then return string.char(cp)
+    elseif cp < 0x800 then
+      return string.char(192 + math.floor(cp / 64), 128 + (cp % 64))
+    elseif cp < 0x10000 then
+      return string.char(224 + math.floor(cp / 4096), 128 + (math.floor(cp / 64) % 64), 128 + (cp % 64))
+    end
+    return string.char(240 + math.floor(cp / 262144), 128 + (math.floor(cp / 4096) % 64),
+      128 + (math.floor(cp / 64) % 64), 128 + (cp % 64))
+  end
+
+  local function parseString()
+    pos = pos + 1
+    local buf = {}
+    while pos <= len do
+      local c = str:sub(pos, pos)
+      if c == '"' then pos = pos + 1 break end
+      if c == "\\" then
+        pos = pos + 1
+        local e = str:sub(pos, pos)
+        pos = pos + 1
+        if e == "n" then buf[#buf + 1] = "\n"
+        elseif e == "t" then buf[#buf + 1] = "\t"
+        elseif e == "r" then buf[#buf + 1] = "\r"
+        elseif e == "b" then buf[#buf + 1] = "\b"
+        elseif e == "f" then buf[#buf + 1] = "\f"
+        elseif e == "/" then buf[#buf + 1] = "/"
+        elseif e == "\\" then buf[#buf + 1] = "\\"
+        elseif e == '"' then buf[#buf + 1] = '"'
+        elseif e == "u" then
+          local hex = str:sub(pos, pos + 3)
+          pos = pos + 4
+          local cp = tonumber(hex, 16) or 63
+          if cp >= 0xD800 and cp <= 0xDBFF and str:sub(pos, pos + 1) == "\\u" then
+            local lo = tonumber(str:sub(pos + 2, pos + 5), 16)
+            if lo and lo >= 0xDC00 and lo <= 0xDFFF then
+              cp = 0x10000 + (cp - 0xD800) * 0x400 + (lo - 0xDC00)
+              pos = pos + 6
+            end
+          end
+          buf[#buf + 1] = utf8Char(cp)
+        else
+          buf[#buf + 1] = e
+        end
+      else
+        buf[#buf + 1] = c
+        pos = pos + 1
+      end
+    end
+    return table.concat(buf)
+  end
+
+  local function parseNumber()
+    local s = pos
+    while pos <= len do
+      local c = str:sub(pos, pos)
+      if c:match("[%d%+%-%.%deE]") then pos = pos + 1 else break end
+    end
+    return tonumber(str:sub(s, pos - 1))
+  end
+
+  local parseValue
+
+  local function parseArray()
+    local arr = {}
+    pos = pos + 1
+    skipWs()
+    if str:sub(pos, pos) == "]" then pos = pos + 1 return arr end
+    while pos <= len do
+      arr[#arr + 1] = parseValue()
+      skipWs()
+      local c = str:sub(pos, pos)
+      if c == "," then pos = pos + 1
+      elseif c == "]" then pos = pos + 1 break
+      else break end
+    end
+    return arr
+  end
+
+  local function parseObject()
+    local obj = {}
+    pos = pos + 1
+    skipWs()
+    if str:sub(pos, pos) == "}" then pos = pos + 1 return obj end
+    while pos <= len do
+      skipWs()
+      if str:sub(pos, pos) ~= '"' then break end
+      local key = parseString()
+      skipWs()
+      if str:sub(pos, pos) == ":" then pos = pos + 1 end
+      local val = parseValue()
+      obj[key] = val
+      skipWs()
+      local c = str:sub(pos, pos)
+      if c == "," then pos = pos + 1
+      elseif c == "}" then pos = pos + 1 break
+      else break end
+    end
+    return obj
+  end
+
+  parseValue = function()
+    skipWs()
+    if pos > len then return nil end
+    local c = str:sub(pos, pos)
+    if c == "{" then return parseObject() end
+    if c == "[" then return parseArray() end
+    if c == '"' then return parseString() end
+    if str:sub(pos, pos + 3) == "true" then pos = pos + 4 return true end
+    if str:sub(pos, pos + 4) == "false" then pos = pos + 5 return false end
+    if str:sub(pos, pos + 3) == "null" then pos = pos + 4 return nil end
+    return parseNumber()
+  end
+
+  local ok, res = pcall(parseValue)
+  if not ok then return nil end
+  return res
+end
+
+--------------------------------------------------------------
+-- \u{015E}ifRELEME (GitHub PAT)
+-- Anahtar par\u{00E7}alar\u{0131} + XOR/ekleme katmanlar\u{0131} + CRC benzeri b\u{00FC}t\u{00FC}nl\u{00FC} kontrol\u{00FC}.
+--------------------------------------------------------------
+local function mix32(seed, byte)
+  seed = (seed ~ byte) & 0xFFFFFFFF
+  seed = ((seed * 31) + 0x9E3779B9) & 0xFFFFFFFF
+  return seed
+end
+
+local function keySeed(key)
+  local seed = 0x811C9DC5
+  for i = 1, #key do seed = mix32(seed, key:byte(i)) end
+  return seed
+end
+
+local function checksum(data)
+  local h = 0x811C9DC5
+  for i = 1, #data do h = mix32(h, data:byte(i)) end
+  return h
+end
+
+local function keystream(key, n)
+  local state = keySeed(key)
+  local out = {}
+  for i = 1, n do
+    local x = state
+    x = x ~ ((x << 13) & 0xFFFFFFFF)
+    x = x ~ (x >> 17)
+    x = x ~ ((x << 5) & 0xFFFFFFFF)
+    state = x & 0xFFFFFFFF
+    out[i] = string.char(state & 0xFF)
+  end
+  return table.concat(out)
+end
+
+local function decryptBlob(keyParts, blob)
+  local key = table.concat(keyParts or {})
+  if key == "" or not blob or blob == "" then return nil end
+  local raw = b64decode(blob)
+  if #raw < 5 then return nil end
+  local ks = keystream(key, #raw)
+  local out = {}
+  for i = 1, #raw do
+    local kb = key:byte(((i - 1) % #key) + 1)
+    local b = (raw:byte(i) - ((kb + (i - 1) * 7) & 0xFF) + 256) & 0xFF
+    b = b ~ ks:byte(i)
+    out[i] = string.char(b)
+  end
+  local data = table.concat(out)
+  local sb = data:sub(1, 4)
+  local stored = 0
+  for i = 1, 4 do stored = stored * 256 + sb:byte(i) end
+  local body = data:sub(5)
+  if stored ~= checksum(body) then return nil end
+  return body
+end
+
+--------------------------------------------------------------
+-- HTTP KATMANI
+--------------------------------------------------------------
+local function httpReq(url, method, body, headers)
+  method = (method or "GET"):upper()
+  headers = headers or {}
+  local lastErr = "bilinmeyen hata"
+
+  if type(request) == "function" then
+    local ok, res = pcall(request, { Url = url, Method = method, Headers = headers, Body = body })
+    if ok and type(res) == "table" then
+      local code = tonumber(res.StatusCode or res.Status or res.code or 0) or 0
+      local txt = res.Body or res.Content or res.body or ""
+      if type(txt) ~= "string" then txt = tostring(txt) end
+      if code >= 200 and code < 300 then return true, txt, code end
+      return false, txt, code
+    elseif not ok then
+      lastErr = tostring(res)
+    end
+  end
+
+  if type(http_request) == "function" then
+    local ok, res = pcall(http_request, url, method, headers, body)
+    if ok and type(res) == "table" then
+      local code = tonumber(res.StatusCode or res.Status or res.code or 0) or 0
+      local txt = res.Body or res.Content or res.body or ""
+      if type(txt) ~= "string" then txt = tostring(txt) end
+      if code >= 200 and code < 300 then return true, txt, code end
+      return false, txt, code
+    elseif not ok then
+      lastErr = tostring(res)
+    end
+  end
+
+  if type(syn) == "table" and type(syn.request) == "function" then
+    local ok, res = pcall(syn.request, { Url = url, Method = method, Headers = headers, Body = body })
+    if ok and type(res) == "table" then
+      local code = tonumber(res.StatusCode or res.Status or 0) or 0
+      local txt = res.Body or res.Content or ""
+      if type(txt) ~= "string" then txt = tostring(txt) end
+      if code >= 200 and code < 300 then return true, txt, code end
+      return false, txt, code
+    end
+  end
+
+  if type(http) == "table" and type(http.get) == "function" then
+    local ok, res = pcall(http.get, url)
+    if ok and res then
+      local code = tonumber(res.StatusCode or res.Status or 0) or 0
+      local txt = res.Body or res.Content or ""
+      if type(txt) ~= "string" then txt = tostring(txt) end
+      if code >= 200 and code < 300 then return true, txt, code end
+      return false, txt, code
+    end
+  end
+
+  -- Son \u{00E7}are: oyun i\u{00E7}i i\u{00E7}inde HttpService
+  local okSvc, svc = pcall(function() return game:GetService("HttpService") end)
+  if okSvc and svc then
+    local ok, res = pcall(function()
+      return svc:RequestAsync({ Url = url, Method = method, Headers = headers, Body = body })
+    end)
+    if ok and res then
+      local code = tonumber(res.StatusCode or 0) or 0
+      local txt = res.Body or ""
+      if code >= 200 and code < 300 then return true, txt, code end
+      return false, txt, code
+    elseif not ok then
+      lastErr = tostring(res)
+    end
+  end
+
+  return false, lastErr, 0
+end
+
+local function fetchText(url)
+  local ok, body, code = httpReq(url, "GET", nil, { ["User-Agent"] = "loadsystem-lua" })
+  if not ok then
+    return nil, "HTTP " .. tostring(code)
+  end
+  if not body or #body < 3 then
+    return nil, "bo\u{015F} yan\u{0131}t"
+  end
+  return body
+end
+
+--------------------------------------------------------------
+-- GITHUB API
+--------------------------------------------------------------
+local function ghHeaders(token)
+  local h = {
+    ["Accept"] = "application/vnd.github+json",
+    ["X-GitHub-Api-Version"] = "2022-11-28",
+    ["User-Agent"] = "loadsystem-lua",
+  }
+  if token and token ~= "" then h["Authorization"] = "Bearer " .. token end
+  return h
+end
+
+local function ghGetFile(path, token)
+  local url = API_BASE .. path .. "?ref=" .. BRANCH
+  local ok, body, code = httpReq(url, "GET", nil, ghHeaders(token))
+  if not ok then return nil, "HTTP " .. tostring(code) end
+  local data = jsonDecode(body)
+  if type(data) ~= "table" or not data.sha then return nil, "ge\u{00E7}ersiz yan\u{0131}t" end
+  local content = ""
+  if type(data.content) == "string" then
+    content = b64decode((data.content:gsub("%s", "")))
+  end
+  return { sha = data.sha, content = content }
+end
+
+local function ghPutFile(path, content, sha, token, message)
+  local payload = jsonEncode({
+    message = message or ("loadsystem: update " .. path),
+    content = b64encode(content),
+    sha = sha,
+    branch = BRANCH,
+  })
+  local ok, body, code = httpReq(API_BASE .. path, "PUT", payload, ghHeaders(token))
+  if not ok then return false, "HTTP " .. tostring(code) end
+  local data = jsonDecode(body)
+  if type(data) == "table" and data.content and data.content.sha then
+    return true, data.content.sha
+  end
+  return false, "beklenmeyen yan\u{0131}t"
+end
+
+--------------------------------------------------------------
+-- OYUNCU L\u{0131}STES\u{0130} (player dosyas\u{0131})
+-- Bi\u{00E7}im sat\u{0131}r: player:(isim)/playert:(takma ad)/password:(\u{015F}ifre)
+--------------------------------------------------------------
+local function parsePlayers(text)
+  local list = {}
+  for line in (text or ""):gmatch("[^\r\n]+") do
+    line = line:gsub("^%s+", ""):gsub("%s+$", "")
+    if line ~= "" then
+      local rec = {}
+      local fields = 0
+      for field in line:gmatch("[^/]+") do
+        fields = fields + 1
+        local k, v = field:match("^([^:]+):(.*)$")
+        if k then
+          k = k:gsub("^%s+", ""):gsub("%s+$", ""):lower()
+          rec[k] = v
+        end
+      end
+      if fields >= 3 and rec.player and rec.playert and rec.password then
+        list[#list + 1] = { player = rec.player, playert = rec.playert, password = rec.password }
+      end
+    end
+  end
+  return list
+end
+
+local function readPlayers(token)
+  -- \u{00D6}ncelikle i\u{00E7}erik API (sha laz\u{0131}m), yetmezse ham dosya
+  local info, err = ghGetFile(FILE_PLAYER, token)
+  if info then
+    return parsePlayers(info.content), info
+  end
+  local url = RAW_BASE .. FILE_PLAYER .. "?t=" .. tostring(os.time())
+  local raw = fetchText(url)
+  if raw then return parsePlayers(raw), nil end
+  return {}, nil, err
+end
+
+local function findPlayer(list, nick, pass)
+  local target = string.lower(nick or "")
+  for _, rec in ipairs(list) do
+    if string.lower(rec.playert or "") == target and rec.password == pass then
+      return rec
+    end
+  end
+  return nil
+end
+
+local function nicknameTaken(list, nick)
+  local target = string.lower(nick or "")
+  for _, rec in ipairs(list) do
+    if string.lower(rec.playert or "") == target then return true end
+  end
+  return false
+end
+
+--------------------------------------------------------------
+-- DO\u{011c}ULAMA
+--------------------------------------------------------------
+local function getPlayerName()
+  for _ = 1, 10 do
+    local ok, plr = pcall(function() return Players.LocalPlayer end)
+    if ok and plr then
+      local name = plr.Name
+      if not name or name == "" then name = plr.DisplayName end
+      if name and name ~= "" then return name end
+    end
+    sleep(0.2)
+  end
+  return "Player"
+end
+
+--------------------------------------------------------------
+-- G\u{00D6}R\u{00C4}N\u{00DC} EKRAN (siyah + LOADING)
+--------------------------------------------------------------
+local function buildBoot()
+  local gui = Instance.new("ScreenGui")
+  gui.Name = "LoadSystemBoot"
+  gui.ResetOnSpawn = false
+  gui.IgnoreGuiInset = true
+  gui.DisplayOrder = 999
+  gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+  gui.Parent = CoreGui
+
+  local bg = Instance.new("Frame")
+  bg.Name = "Background"
+  bg.Size = UDim2.new(1, 0, 1, 0)
+  bg.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+  bg.BorderSizePixel = 0
+  bg.ZIndex = 1
+  bg.Parent = gui
+
+  local title = Instance.new("TextLabel")
+  title.Name = "Title"
+  title.Size = UDim2.fromOffset(700, 56)
+  title.Position = UDim2.fromScale(0.5, 0.44)
+  title.AnchorPoint = UDim2.fromScale(0.5, 0.5)
+  title.BackgroundTransparency = 1
+  title.Text = "LOADING"
+  title.TextColor3 = Color3.fromRGB(255, 255, 255)
+  title.TextSize = 42
+  title.Font = Enum.Font.GothamBold
+  title.TextXAlignment = Enum.TextXAlignment.Center
+  title.ZIndex = 2
+  title.Parent = bg
+
+  local sub = Instance.new("TextLabel")
+  sub.Name = "Sub"
+  sub.Size = UDim2.fromOffset(700, 24)
+  sub.Position = UDim2.fromScale(0.5, 0.51)
+  sub.AnchorPoint = UDim2.fromScale(0.5, 0.5)
+  sub.BackgroundTransparency = 1
+  sub.Text = "S\u{0130}STEM B\u{0130}LE\u{015e}LER\u{0130} Y\u{00DC}KLEN\u{0130}YOR"
+  sub.TextColor3 = Color3.fromRGB(150, 152, 158)
+  sub.TextSize = 13
+  sub.Font = Enum.Font.GothamMedium
+  sub.TextXAlignment = Enum.TextXAlignment.Center
+  sub.ZIndex = 2
+  sub.Parent = bg
+
+  local barBg = Instance.new("Frame")
+  barBg.Name = "BarBg"
+  barBg.Size = UDim2.fromOffset(280, 4)
+  barBg.Position = UDim2.fromScale(0.5, 0.575)
+  barBg.AnchorPoint = UDim2.fromScale(0.5, 0.5)
+  barBg.BackgroundColor3 = Color3.fromRGB(40, 42, 48)
+  barBg.BorderSizePixel = 0
+  barBg.ZIndex = 2
+  barBg.Parent = bg
+
+  local bar = Instance.new("Frame")
+  bar.Name = "Bar"
+  bar.Size = UDim2.fromOffset(0, 4)
+  bar.Position = UDim2.fromOffset(0, 0)
+  bar.BackgroundColor3 = Color3.fromRGB(88, 101, 242)
+  bar.BorderSizePixel = 0
+  bar.ZIndex = 3
+  bar.Parent = barBg
+  Instance.new("UICorner", { CornerRadius = UDim.new(0, 2) }).Parent = bar
+
+  pcall(function()
+    local t = TweenService:Create(bar,
+      TweenInfo.new(1.1, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
+      { Size = UDim2.fromOffset(280, 4) })
+    t:Play()
+  end)
+
+  local boot = {
+    gui = gui, bg = bg, title = title, sub = sub, bar = bar,
+    setText = function(text, subText)
+      if title then title.Text = text end
+      if subText and sub then sub.Text = subText end
+    end,
+    fail = function(text)
+      if title then
+        title.Text = text
+        title.TextColor3 = Color3.fromRGB(224, 80, 80)
+      end
+      if sub then sub.Text = "SISTEM YUKLENEMEDI" end
+    end,
+  }
+  return boot
+end
+
+--------------------------------------------------------------
+-- S\u{0130}YAH PERDE (main-menu ge\u{00E7}i\u{015F} i\u{00E7}in)
+--------------------------------------------------------------
+local function buildCurtain()
+  local gui = Instance.new("ScreenGui")
+  gui.Name = "LoadSystemCurtain"
+  gui.ResetOnSpawn = false
+  gui.IgnoreGuiInset = true
+  gui.DisplayOrder = 950
+  gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+  gui.Parent = CoreGui
+
+  local bg = Instance.new("Frame")
+  bg.Size = UDim2.new(1, 0, 1, 0)
+  bg.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+  bg.BorderSizePixel = 0
+  bg.ZIndex = 1
+  bg.Parent = gui
+
+  local title = Instance.new("TextLabel")
+  title.Size = UDim2.fromOffset(700, 56)
+  title.Position = UDim2.fromScale(0.5, 0.46)
+  title.AnchorPoint = UDim2.fromScale(0.5, 0.5)
+  title.BackgroundTransparency = 1
+  title.Text = "LOADING MAIN MENU"
+  title.TextColor3 = Color3.fromRGB(255, 255, 255)
+  title.TextSize = 34
+  title.Font = Enum.Font.GothamBold
+  title.TextXAlignment = Enum.TextXAlignment.Center
+  title.ZIndex = 2
+  title.Parent = bg
+
+  local sub = Instance.new("TextLabel")
+  sub.Size = UDim2.fromOffset(700, 24)
+  sub.Position = UDim2.fromScale(0.5, 0.53)
+  sub.AnchorPoint = UDim2.fromScale(0.5, 0.5)
+  sub.BackgroundTransparency = 1
+  sub.Text = "ARAYUZ HAZIRLANIYOR"
+  sub.TextColor3 = Color3.fromRGB(150, 152, 158)
+  sub.TextSize = 13
+  sub.Font = Enum.Font.GothamMedium
+  sub.TextXAlignment = Enum.TextXAlignment.Center
+  sub.ZIndex = 2
+  sub.Parent = bg
+
+  local retry = Instance.new("TextButton")
+  retry.Size = UDim2.fromOffset(220, 46)
+  retry.Position = UDim2.fromScale(0.5, 0.6)
+  retry.AnchorPoint = UDim2.fromScale(0.5, 0.5)
+  retry.BackgroundColor3 = Color3.fromRGB(24, 26, 31)
+  retry.BorderSizePixel = 0
+  retry.Text = "TEKRAR DENE"
+  retry.TextColor3 = Color3.fromRGB(255, 255, 255)
+  retry.TextSize = 14
+  retry.Font = Enum.Font.GothamBold
+  retry.Visible = false
+  retry.ZIndex = 3
+  retry.Parent = bg
+  Instance.new("UICorner", { CornerRadius = UDim.new(0, 12) }).Parent = retry
+
+  local api = {
+    gui = gui, bg = bg, title = title, sub = sub,
+    setText = function(t, s)
+      title.Text = t
+      if s then sub.Text = s end
+    end,
+    fadeIn = function(t)
+      bg.BackgroundTransparency = 1
+      title.TextTransparency = 1
+      sub.TextTransparency = 1
+      pcall(function()
+        TweenService:Create(bg, TweenInfo.new(t or 0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { BackgroundTransparency = 0 }):Play()
+        TweenService:Create(title, TweenInfo.new(t or 0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { TextTransparency = 0 }):Play()
+        TweenService:Create(sub, TweenInfo.new(t or 0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { TextTransparency = 0 }):Play()
+      end)
+    end,
+    fadeOut = function(t)
+      pcall(function()
+        TweenService:Create(bg, TweenInfo.new(t or 0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { BackgroundTransparency = 1 }):Play()
+        TweenService:Create(title, TweenInfo.new(t or 0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { TextTransparency = 1 }):Play()
+        TweenService:Create(sub, TweenInfo.new(t or 0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { TextTransparency = 1 }):Play()
+      end)
+      sleep((t or 0.5) + 0.05)
+      pcall(function() gui:Destroy() end)
+    end,
+    error = function(text)
+      title.Text = text
+      title.TextColor3 = Color3.fromRGB(224, 80, 80)
+      sub.Text = "BAGLANTI KONTROL EDILIP TEKRAR DENEYIN"
+      retry.Visible = true
+    end,
+    setRetry = function(fn) retry.MouseButton1Click:Connect(fn) end,
+  }
+  return api
+end
+
+--------------------------------------------------------------
+-- ANA AKI\u{015F}
+--------------------------------------------------------------
+local TOKEN = nil
+local panel = nil
+
+local function loadChunk(code, label)
+  if type(loadstring) ~= "function" then return nil, "loadstring bulunamadi" end
+  local chunk, err = loadstring(code)
+  if not chunk then return nil, tostring(err) end
+  local ok, mod = pcall(chunk)
+  if not ok then return nil, tostring(mod) end
+  return mod
+end
+
+local function waitFor(cond, timeout)
+  local waited = 0
+  while waited < timeout do
+    if cond() then return true end
+    sleep(0.1)
+    waited = waited + 0.1
+  end
+  return cond()
+end
+
+local function validate(name, nick, pass)
+  if not nick or nick == "" then return false, "Takma ad bo\u{015F} olamaz." end
+  if #nick < 3 or #nick > 20 then return false, "Takma ad 3-20 karakter olmal\u{0131}." end
+  if nick:find("[/%s]") then return false, "Takma ad '/' ve bo\u{015F}luk i\u{00E7}eremez." end
+  if not pass or pass == "" then return false, "\u{015E}ifre bo\u{015F} olamaz." end
+  if #pass < 4 or #pass > 64 then return false, "\u{015E}ifre 4-64 karakter olmal\u{0131}." end
+  if pass:find("[/%s]") then return false, "\u{015E}ifre '/' ve bo\u{015F}luk i\u{00E7}eremez." end
+  if not name or name == "" then return false, "Oyuncu ad\u{0131} bulunamad\u{0131}." end
+  return true
+end
+
+local function proceedToMainMenu(session)
+  sleep(0.4)
+  if panel and panel.isOpen and panel.isOpen() then pcall(function() panel.close() end) end
+  sleep(0.45)
+
+  local curtain = buildCurtain()
+  curtain.fadeIn(0.35)
+  sleep(0.25)
+
+  local function attempt()
+    curtain.setText("LOADING MAIN MENU", "ARAYUZ YUKLENIYOR")
+    local code, err = fetchText(RAW_BASE .. FILE_MENU)
+    if not code then
+      curtain.error("MAIN MENU YUKLENEMEDI")
+      return
+    end
+    local mod, lerr = loadChunk(code, FILE_MENU)
+    if not mod then
+      curtain.error("MAIN MENU HATASI")
+      return
+    end
+    -- main-menu calistigini dogrula (hazir bayragi)
+    local ready = waitFor(function()
+      return S.MAIN_READY == true
+    end, 20)
+    if not ready then
+      curtain.error("MAIN MENU BASLAMADI")
+      return
+    end
+    S.MAIN = mod
+    curtain.setText("HAZIR", "HO\u{015e} GELD\u{0130}N")
+    sleep(0.35)
+    curtain.fadeOut(0.5)
+  end
+
+  curtain.setRetry(function() attempt() end)
+  attempt()
+end
+
+local function onLogin(nick, pass)
+  local list = readPlayers(TOKEN)
+  local rec = findPlayer(list, nick, pass)
+  if not rec then
+    return false, "Takma ad veya \u{015F}ifre hatal\u{0131}."
+  end
+  local session = { player = rec.player, playert = rec.playert, time = os.time() }
+  S.SESSION = session
+  spawn(function() proceedToMainMenu(session) end)
+  return true, "Giri\u{015F} ba\u{015F}ar\u{0131}l\u{0131}."
+end
+
+local function onRegister(name, nick, pass)
+  local ok, msg = validate(name, nick, pass)
+  if not ok then return false, msg end
+  if not TOKEN or TOKEN == "" then
+    return false, "Sunucu eri\u{015F}imi yok (API anahtar\u{0131} \u{00E7}\u{00F6}z\u{00FC}lemedi)."
+  end
+
+  local list, info = readPlayers(TOKEN)
+  if nicknameTaken(list, nick) then
+    return false, "Bu takma ad zaten al\u{0131}nm\u{0131}\u{015F}."
+  end
+
+  local content = info and info.content or ""
+  local line = "player:" .. name .. "/playert:" .. nick .. "/password:" .. pass
+  if content == "" then
+    content = line .. "\n"
+  elseif content:sub(-1) == "\n" then
+    content = content .. line .. "\n"
+  else
+    content = content .. "\n" .. line .. "\n"
+  end
+
+  local sha = info and info.sha or nil
+  if not sha then
+    -- sha bilgisi yoksa yeniden al
+    local re = ghGetFile(FILE_PLAYER, TOKEN)
+    if re then sha = re.sha end
+  end
+  if not sha then
+    return false, "Dosya bilgisi al\u{0131}namad\u{0131}."
+  end
+
+  local wrote, werr = ghPutFile(FILE_PLAYER, content, sha, TOKEN, "loadsystem: add player " .. nick)
+  if not wrote then
+    return false, "Yazma hatas\u{0131}: " .. tostring(werr)
+  end
+
+  local session = { player = name, playert = nick, time = os.time() }
+  S.SESSION = session
+  spawn(function() proceedToMainMenu(session) end)
+  return true, "Hesap olu\u{015F}turuldu."
+end
+
+local function main()
+  local boot = buildBoot()
+  S.boot = boot
+
+  -- 1) API anahtarini coz
+  TOKEN = decryptBlob(CIPHER.KEY, CIPHER.BLOB)
+  if not TOKEN then
+    boot.fail("API ANAHTARI COZULEMEDI")
+    return
+  end
+
+  -- 2) arayuzu indir
+  boot.setText("LOADING", "ARAYUZ INDIRILIYOR")
+  local code, err = fetchText(RAW_BASE .. FILE_GUI)
+  if not code then
+    boot.fail("ARAYUZ YUKLENEMEDI")
+    return
+  end
+
+  -- 3) arayuzu calistir
+  local GUI, lerr = loadChunk(code, FILE_GUI)
+  if not GUI or type(GUI.build) ~= "function" then
+    boot.fail("ARAYUZ HATASI")
+    return
+  end
+  S.GUI = GUI
+
+  -- 4) beyaz paneli kur
+  panel = GUI.build({
+    username = getPlayerName(),
+    onLogin = onLogin,
+    onRegister = onRegister,
+  })
+
+  -- 5) siyah ekrani animasyonla kaldir
+  sleep(0.45)
+  pcall(function() GUI.dismissBoot() end)
+end
+
+spawn(main)
+
+return {
+  version = "1.0.0",
+  session = function() return S.SESSION end,
+}
