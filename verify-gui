@@ -1,1 +1,564 @@
+--[[
+  verify-gui  |  LOAD SYSTEM — ARAYÜZ MODÜLÜ
+  =========================================================
+  Bu dosya tek başına çalıştırılmaz. `verify` tarafından
+  raw.githubusercontent üzerinden indirilip loadstring ile
+  çalıştırılır ve dönen tablo (M) arayüz API'sini taşır.
 
+  İçerik:
+    * Beyaz ortam paneli (beyaz ekran)
+    * LOGIN / CREATE ACCOUNT ana menüsü
+    * Login formu (takma ad + şifre)
+    * Create Account formu (isim otomatik dolu + takma ad + şifre)
+    * Hata / başarı mesaj alanı, tüm geçiş animasyonları
+
+  Dönen değer:
+    M.build(opts) -> panel
+      opts.username  = oyuncunun adı (otomatik doldurulur)
+      opts.onLogin   = function(nickname, password) -> ok:boolean, msg:string
+      opts.onRegister= function(name, nickname, password) -> ok:boolean, msg:string
+]]
+
+local G = (type(getgenv) == "function" and getgenv()) or _G
+local S = G.__LOADSYS or {}
+G.__LOADSYS = S
+
+local Players        = game:GetService("Players")
+local TweenService   = game:GetService("TweenService")
+local CoreGui        = game:GetService("CoreGui")
+
+--------------------------------------------------------------
+-- Temel yardımcılar
+--------------------------------------------------------------
+local BULLET = string.char(226, 128, 162) -- •
+
+local function sleep(s)
+  s = s or 0
+  if type(task) == "table" and type(task.wait) == "function" then task.wait(s)
+  elseif type(wait) == "function" then wait(s) end
+end
+
+local function new(class, props, parent)
+  local o = Instance.new(class)
+  if props then for k, v in pairs(props) do o[k] = v end end
+  if parent then o.Parent = parent end
+  return o
+end
+
+local function round(obj, radius)
+  new("UICorner", { CornerRadius = UDim.new(0, radius or 12) }, obj)
+end
+
+local function stroke(obj, color, thickness)
+  new("UIStroke", {
+    ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+    Color = color,
+    Thickness = thickness or 1,
+  }, obj)
+end
+
+local function tw(obj, goal, time, delay)
+  local ok, t = pcall(function()
+    return TweenService:Create(
+      obj,
+      TweenInfo.new(time or 0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.Out, 0, false, delay or 0),
+      goal
+    )
+  end)
+  if ok and t then pcall(function() t:Play() end) end
+  return t
+end
+
+--------------------------------------------------------------
+-- Renk paleti
+--------------------------------------------------------------
+local C = {
+  bg        = Color3.fromRGB(255, 255, 255),
+  text      = Color3.fromRGB(22, 24, 29),
+  muted     = Color3.fromRGB(140, 145, 155),
+  faint     = Color3.fromRGB(176, 181, 190),
+  placeholder = Color3.fromRGB(163, 168, 178),
+  field     = Color3.fromRGB(245, 246, 248),
+  fieldLine = Color3.fromRGB(226, 228, 233),
+  dark      = Color3.fromRGB(20, 22, 26),
+  darkHi    = Color3.fromRGB(38, 42, 49),
+  hover     = Color3.fromRGB(249, 250, 251),
+  accent    = Color3.fromRGB(88, 101, 242),
+  ok        = Color3.fromRGB(22, 158, 92),
+  err       = Color3.fromRGB(212, 68, 68),
+}
+
+local PANEL_W, PANEL_H = 440, 620
+local FX, FW = 50, 340 -- form kenar boşluğu / genişliği
+
+--------------------------------------------------------------
+-- M (modül)
+--------------------------------------------------------------
+local M = {}
+M.version = "1.0.0"
+
+--------------------------------------------------------------
+-- Alan (textbox) üretici
+--------------------------------------------------------------
+local function makeField(parent, opts)
+  local frame = new("Frame", {
+    Size = UDim2.fromOffset(FW, 46),
+    Position = UDim2.fromOffset(FX, opts.y or 0),
+    BackgroundColor3 = C.field,
+    BorderSizePixel = 0,
+    ZIndex = 2,
+  }, parent)
+  round(frame, 12)
+  stroke(frame, C.fieldLine, 1)
+
+  local ph = new("TextLabel", {
+    Size = UDim2.new(1, -24, 1, 0),
+    Position = UDim2.fromOffset(12, 0),
+    BackgroundTransparency = 1,
+    Text = opts.placeholder or "",
+    TextColor3 = C.placeholder,
+    TextSize = 15,
+    Font = Enum.Font.Gotham,
+    TextXAlignment = Enum.TextXAlignment.Left,
+    TextYAlignment = Enum.TextYAlignment.Center,
+    ZIndex = 3,
+  }, frame)
+
+  local box = new("TextBox", {
+    Size = UDim2.new(1, -24, 1, 0),
+    Position = UDim2.fromOffset(12, 0),
+    BackgroundTransparency = 1,
+    BorderSizePixel = 0,
+    Text = "",
+    TextSize = 15,
+    Font = Enum.Font.Gotham,
+    TextColor3 = C.text,
+    PlaceholderText = "",
+    ClearTextOnFocus = false,
+    TextXAlignment = Enum.TextXAlignment.Left,
+    TextYAlignment = Enum.TextYAlignment.Center,
+    ZIndex = 4,
+  }, frame)
+
+  local bullets = nil
+  if opts.mask then
+    box.TextTransparency = 1
+    bullets = new("TextLabel", {
+      Size = UDim2.new(1, -24, 1, 0),
+      Position = UDim2.fromOffset(12, 0),
+      BackgroundTransparency = 1,
+      Text = "",
+      TextColor3 = C.text,
+      TextSize = 15,
+      Font = Enum.Font.Gotham,
+      TextXAlignment = Enum.TextXAlignment.Left,
+      TextYAlignment = Enum.TextYAlignment.Center,
+      ZIndex = 5,
+    }, frame)
+  end
+
+  local function refresh()
+    local txt = box.Text or ""
+    if bullets then bullets.Text = string.rep(BULLET, utf8.len(txt) or #txt) end
+    ph.Visible = (txt == "")
+  end
+
+  box:GetPropertyChangedSignal("Text"):Connect(refresh)
+  refresh()
+
+  if opts.value and opts.value ~= "" then
+    box.Text = tostring(opts.value)
+    refresh()
+  end
+  if opts.readOnly then
+    box.TextEditable = false
+    box.TextColor3 = C.muted
+  end
+
+  return { frame = frame, box = box, refresh = refresh }
+end
+
+--------------------------------------------------------------
+-- Buton üretici
+--------------------------------------------------------------
+local function makeButton(parent, text, y, dark)
+  local b = new("TextButton", {
+    Size = UDim2.fromOffset(FW, 52),
+    Position = UDim2.fromOffset(FX, y),
+    BackgroundColor3 = dark and C.dark or C.bg,
+    BorderSizePixel = 0,
+    Text = text,
+    TextColor3 = dark and C.bg or C.text,
+    TextSize = 15,
+    Font = Enum.Font.GothamBold,
+    AutoButtonColor = false,
+    ZIndex = 4,
+  }, parent)
+  round(b, 12)
+  if not dark then stroke(b, C.fieldLine, 1) end
+
+  b.MouseEnter:Connect(function()
+    tw(b, { BackgroundColor3 = dark and C.darkHi or C.hover }, 0.15)
+  end)
+  b.MouseLeave:Connect(function()
+    tw(b, { BackgroundColor3 = dark and C.dark or C.bg }, 0.15)
+  end)
+  return b
+end
+
+--------------------------------------------------------------
+-- Panel kurulumu
+--------------------------------------------------------------
+function M.build(opts)
+  opts = opts or {}
+
+  local gui = new("ScreenGui", {
+    Name = "LoadSystemGui",
+    ResetOnSpawn = false,
+    IgnoreGuiInset = true,
+    DisplayOrder = 900,
+    ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+  })
+  gui.Parent = CoreGui
+
+  -- panel arkası gölge
+  local shadow = new("Frame", {
+    Name = "Shadow",
+    Size = UDim2.fromOffset(PANEL_W + 24, PANEL_H + 24),
+    Position = UDim2.new(0.5, 0, 0.5, 14),
+    AnchorPoint = UDim2.fromScale(0.5, 0.5),
+    BackgroundColor3 = Color3.fromRGB(0, 0, 0),
+    BackgroundTransparency = 0.93,
+    BorderSizePixel = 0,
+    ZIndex = 0,
+  }, gui)
+  round(shadow, 22)
+
+  local panel = new("Frame", {
+    Name = "Panel",
+    Size = UDim2.fromOffset(PANEL_W, PANEL_H),
+    Position = UDim2.new(0.5, 0, 0.5, 14),
+    AnchorPoint = UDim2.fromScale(0.5, 0.5),
+    BackgroundColor3 = C.bg,
+    BorderSizePixel = 0,
+    ZIndex = 1,
+  }, gui)
+  round(panel, 18)
+
+  --------------------------------------------------------------
+  -- Başlık
+  --------------------------------------------------------------
+  local title = new("TextLabel", {
+    Name = "Title",
+    Size = UDim2.new(1, -40, 0, 36),
+    Position = UDim2.fromOffset(20, 28),
+    BackgroundTransparency = 1,
+    Text = "LOAD SYSTEM",
+    TextColor3 = C.text,
+    TextSize = 27,
+    Font = Enum.Font.GothamBold,
+    TextXAlignment = Enum.TextXAlignment.Left,
+    ZIndex = 3,
+  }, panel)
+
+  local sub = new("TextLabel", {
+    Size = UDim2.new(1, -40, 0, 20),
+    Position = UDim2.fromOffset(20, 68),
+    BackgroundTransparency = 1,
+    Text = "HESAP DO\u{0113}RULAMASI GEREK\u{0130}YOR",
+    TextColor3 = C.muted,
+    TextSize = 12,
+    Font = Enum.Font.GothamMedium,
+    TextXAlignment = Enum.TextXAlignment.Left,
+    ZIndex = 3,
+  }, panel)
+
+  -- renk aksanı
+  local accentBar = new("Frame", {
+    Size = UDim2.fromOffset(56, 4),
+    Position = UDim2.fromOffset(20, 98),
+    BackgroundColor3 = C.accent,
+    BorderSizePixel = 0,
+    ZIndex = 3,
+  }, panel)
+  round(accentBar, 2)
+
+  --------------------------------------------------------------
+  -- Durum (hata / başarı) mesajı
+  --------------------------------------------------------------
+  local status = new("TextLabel", {
+    Name = "Status",
+    Size = UDim2.fromOffset(FW, 44),
+    Position = UDim2.fromOffset(FX, 118),
+    BackgroundTransparency = 1,
+    Text = "",
+    TextColor3 = C.muted,
+    TextSize = 13,
+    Font = Enum.Font.Gotham,
+    TextWrapped = true,
+    TextXAlignment = Enum.TextXAlignment.Left,
+    TextYAlignment = Enum.TextYAlignment.Top,
+    ZIndex = 3,
+  }, panel)
+
+  --------------------------------------------------------------
+  -- Görünümler
+  --------------------------------------------------------------
+  local menuView   = new("Frame", { Name = "MenuView", Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1, ZIndex = 2 }, panel)
+  local loginView  = new("Frame", { Name = "LoginView", Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1, ZIndex = 2 }, panel)
+  local regView    = new("Frame", { Name = "RegisterView", Size = UDim2.new(1, 0, 1, 0), BackgroundTransparency = 1, ZIndex = 2 }, panel)
+
+  -- ---- ANA MENÜ ----
+  local loginBtn  = makeButton(menuView, "LOGIN", 176, true)
+  local regBtn    = makeButton(menuView, "CREATE ACCOUNT", 240, false)
+  local hint = new("TextLabel", {
+    Size = UDim2.fromOffset(FW, 60),
+    Position = UDim2.fromOffset(FX, 312),
+    BackgroundTransparency = 1,
+    Text = "Bir hesap olu\u{015F}turman gerekiyor. Takma ad ve \u{015F}ifre belirle, oyuna hemen gir.",
+    TextColor3 = C.faint,
+    TextSize = 12,
+    Font = Enum.Font.Gotham,
+    TextWrapped = true,
+    TextXAlignment = Enum.TextXAlignment.Left,
+    ZIndex = 3,
+  }, menuView)
+
+  -- ---- LOGIN ----
+  local loginTitle = new("TextLabel", {
+    Size = UDim2.fromOffset(FW, 22),
+    Position = UDim2.fromOffset(FX, 176),
+    BackgroundTransparency = 1,
+    Text = "G\u{0130}R\u{0130}\u{015e} YAP",
+    TextColor3 = C.text,
+    TextSize = 13,
+    Font = Enum.Font.GothamBold,
+    TextXAlignment = Enum.TextXAlignment.Left,
+    ZIndex = 3,
+  }, loginView)
+
+  local lNick = makeField(loginView, { y = 208, placeholder = "Takma ad (playert)" })
+  local lPass = makeField(loginView, { y = 264, placeholder = "\u{015E}ifre", mask = true })
+  local lGo    = makeButton(loginView, "LOGIN", 330, true)
+
+  local lBack = new("TextButton", {
+    Size = UDim2.fromOffset(FW, 24),
+    Position = UDim2.fromOffset(FX, 398),
+    BackgroundTransparency = 1,
+    Text = "\u{2190} Geri",
+    TextColor3 = C.muted,
+    TextSize = 13,
+    Font = Enum.Font.GothamMedium,
+    AutoButtonColor = false,
+    TextXAlignment = Enum.TextXAlignment.Left,
+    ZIndex = 3,
+  }, loginView)
+
+  -- ---- CREATE ACCOUNT ----
+  local regTitle = new("TextLabel", {
+    Size = UDim2.fromOffset(FW, 22),
+    Position = UDim2.fromOffset(FX, 176),
+    BackgroundTransparency = 1,
+    Text = "HESAP OLU\u{015e}TUR",
+    TextColor3 = C.text,
+    TextSize = 13,
+    Font = Enum.Font.GothamBold,
+    TextXAlignment = Enum.TextXAlignment.Left,
+    ZIndex = 3,
+  }, regView)
+
+  local rName  = makeField(regView, { y = 208, placeholder = "Oyuncu ad\u{0131}", value = opts.username or "", readOnly = true })
+  local rNick  = makeField(regView, { y = 264, placeholder = "Takma ad (playert)" })
+  local rPass  = makeField(regView, { y = 320, placeholder = "\u{015E}ifre", mask = true })
+  local rGo    = makeButton(regView, "CREATE ACCOUNT", 386, true)
+
+  local rBack = new("TextButton", {
+    Size = UDim2.fromOffset(FW, 24),
+    Position = UDim2.fromOffset(FX, 454),
+    BackgroundTransparency = 1,
+    Text = "\u{2190} Geri",
+    TextColor3 = C.muted,
+    TextSize = 13,
+    Font = Enum.Font.GothamMedium,
+    AutoButtonColor = false,
+    TextXAlignment = Enum.TextXAlignment.Left,
+    ZIndex = 3,
+  }, regView)
+
+  -- ---- Alt bilgi ----
+  local foot = new("TextLabel", {
+    Size = UDim2.new(1, -40, 0, 18),
+    Position = UDim2.fromOffset(20, PANEL_H - 34),
+    BackgroundTransparency = 1,
+    Text = "LOADSYSTEM v" .. tostring(M.version) .. "  |  scptr1155-gif/loadsystem",
+    TextColor3 = C.faint,
+    TextSize = 11,
+    Font = Enum.Font.Gotham,
+    TextXAlignment = Enum.TextXAlignment.Left,
+    ZIndex = 3,
+  }, panel)
+
+  --------------------------------------------------------------
+  -- Durum yönetimi
+  --------------------------------------------------------------
+  local closed = false
+  local busy = false
+
+  local function setStatus(text, kind)
+    status.Text = text or ""
+    if kind == "ok" then status.TextColor3 = C.ok
+    elseif kind == "err" then status.TextColor3 = C.err
+    else status.TextColor3 = C.muted end
+  end
+
+  local function show(view, others)
+    for _, v in ipairs(others) do
+      v.Visible = false
+    end
+    view.Visible = true
+    view.GroupTransparency = 1
+    tw(view, { GroupTransparency = 0 }, 0.25)
+  end
+
+  local function showMenu()   show(menuView,  { loginView, regView }); end
+  local function showLogin()  show(loginView, { menuView, regView }); end
+  local function showRegister() show(regView, { menuView, loginView }); end
+
+  showMenu()
+
+  --------------------------------------------------------------
+  -- Buton olayları
+  --------------------------------------------------------------
+  loginBtn.MouseButton1Click:Connect(function() showLogin() end)
+  regBtn.MouseButton1Click:Connect(function()
+    setStatus("", "muted")
+    showRegister()
+  end)
+  lBack.MouseButton1Click:Connect(function() showMenu() end)
+  rBack.MouseButton1Click:Connect(function() showMenu() end)
+
+  local function doLogin()
+    if busy then return end
+    local nick = (lNick.box.Text or ""):match("^%s*(.-)%s*$")
+    local pass = lPass.box.Text or ""
+    if nick == "" or pass == "" then
+      setStatus("Takma ad ve \u{015F}ifre bo\u{015F} olamaz.", "err")
+      return
+    end
+    busy = true
+    setStatus("Giri\u{015F} yap\u{0131}l\u{0131}yor...", "muted")
+    local called, ok, msg = false, false, ""
+    if type(opts.onLogin) == "function" then
+      called, ok, msg = pcall(opts.onLogin, nick, pass)
+    end
+    busy = false
+    if not called then
+      ok, msg = false, "Hata: " .. tostring(ok)
+    end
+    if ok == true then
+      setStatus("Giri\u{015F} ba\u{015F}ar\u{0131}l\u{0131}.", "ok")
+    else
+      setStatus(tostring(msg or "Giri\u{015F} yap\u{0131}lamad\u{0131}."), "err")
+    end
+  end
+
+  local function doRegister()
+    if busy then return end
+    local name = (rName.box.Text or ""):match("^%s*(.-)%s*$")
+    local nick = (rNick.box.Text or ""):match("^%s*(.-)%s*$")
+    local pass = rPass.box.Text or ""
+    if nick == "" then
+      setStatus("Takma ad bo\u{015F} olamaz.", "err")
+      return
+    end
+    if pass == "" then
+      setStatus("\u{015E}ifre bo\u{015F} olamaz.", "err")
+      return
+    end
+    busy = true
+    setStatus("Hesap olu\u{015F}turuluyor...", "muted")
+    local called, ok, msg = false, false, ""
+    if type(opts.onRegister) == "function" then
+      called, ok, msg = pcall(opts.onRegister, name, nick, pass)
+    end
+    busy = false
+    if not called then
+      ok, msg = false, "Hata: " .. tostring(ok)
+    end
+    if ok == true then
+      setStatus("Hesap olu\u{015F}turuldu!", "ok")
+    else
+      setStatus(tostring(msg or "Hesap olu\u{015F}turulamad\u{0131}."), "err")
+    end
+  end
+
+  lGo.MouseButton1Click:Connect(doLogin)
+  rGo.MouseButton1Click:Connect(doRegister)
+
+  -- Enter ile giri\u{015F}
+  lPass.box.FocusLost:Connect(function(enterPressed)
+    if enterPressed then doLogin() end
+  end)
+  rPass.box.FocusLost:Connect(function(enterPressed)
+    if enterPressed then doRegister() end
+  end)
+
+  --------------------------------------------------------------
+  -- Aç\u{0131}l\u{0131}\u{015F} / kapan\u{0131}\u{015F} animasyonu
+  --------------------------------------------------------------
+  panel.BackgroundTransparency = 1
+  panel.Position = UDim2.new(0.5, 0, 0.5, 14)
+  shadow.BackgroundTransparency = 1
+  shadow.Position = UDim2.new(0.5, 0, 0.5, 14)
+  title.TextTransparency = 1
+  sub.TextTransparency = 1
+  foot.TextTransparency = 1
+  accentBar.BackgroundTransparency = 1
+
+  tw(panel, { BackgroundTransparency = 0, Position = UDim2.fromScale(0.5, 0.5) }, 0.4)
+  tw(shadow, { BackgroundTransparency = 0.93, Position = UDim2.new(0.5, -12, 0.5, -12) }, 0.4)
+  tw(title, { TextTransparency = 0 }, 0.3, 0.10)
+  tw(sub,   { TextTransparency = 0 }, 0.3, 0.16)
+  tw(foot,  { TextTransparency = 0 }, 0.3, 0.22)
+  tw(accentBar, { BackgroundTransparency = 0 }, 0.3, 0.22)
+
+  local api = {
+    gui = gui,
+    panel = panel,
+    setStatus = setStatus,
+    showMenu = showMenu,
+    showLogin = showLogin,
+    showRegister = showRegister,
+    isOpen = function() return not closed end,
+    close = function()
+      if closed then return end
+      closed = true
+      tw(panel, { BackgroundTransparency = 1 }, 0.3)
+      tw(shadow, { BackgroundTransparency = 1 }, 0.3)
+      sleep(0.35)
+      pcall(function() gui.Enabled = false end)
+      pcall(function() gui:Destroy() end)
+    end,
+  }
+  return api
+end
+
+--------------------------------------------------------------
+-- Siyah y\u{00FC}kleme ekran\u{0131}n\u{0131} animasyonla kald\u{0131}r
+--------------------------------------------------------------
+function M.dismissBoot()
+  local boot = S.boot
+  if not boot or not boot.bg then return end
+  if boot.dismissed then return end
+  boot.dismissed = true
+  if boot.setText then boot.setText("HAZIR") end
+  tw(boot.bg, { BackgroundTransparency = 1 }, 0.5)
+  tw(boot.title, { TextTransparency = 1 }, 0.35)
+  if boot.sub then tw(boot.sub, { TextTransparency = 1 }, 0.35) end
+  if boot.bar then tw(boot.bar, { BackgroundTransparency = 1 }, 0.3) end
+  sleep(0.55)
+  pcall(function() boot.gui:Destroy() end)
+  boot.bg = nil
+end
+
+return M
