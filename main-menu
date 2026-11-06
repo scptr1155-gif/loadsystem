@@ -1,1 +1,265 @@
+--[[
+  main-menu  |  LOAD SYSTEM — ANA MENÜ (v1.0)
+  =========================================================
+  `verify` tarafından giriş/ kayıt başarılı olduktan sonra
+  indirilip çalıştırılır. Arayüzü kurar ve hazır olduğunu
+  S.MAIN_READY = true ile bildirir (verify bu bayrağı kontrol
+  ederek siyah perdeyi kaldırır).
+]]
 
+local G = (type(getgenv) == "function" and getgenv()) or _G
+local S = G.__LOADSYS or {}
+G.__LOADSYS = S
+
+local TweenService = game:GetService("TweenService")
+local CoreGui      = game:GetService("CoreGui")
+
+--------------------------------------------------------------
+-- Yardımcılar
+--------------------------------------------------------------
+local function sleep(s)
+  s = s or 0
+  if type(task) == "table" and type(task.wait) == "function" then task.wait(s)
+  elseif type(wait) == "function" then wait(s) end
+end
+
+local function new(class, props, parent)
+  local o = Instance.new(class)
+  if props then for k, v in pairs(props) do o[k] = v end end
+  if parent then o.Parent = parent end
+  return o
+end
+
+local function round(obj, radius)
+  new("UICorner", { CornerRadius = UDim.new(0, radius or 14) }, obj)
+end
+
+local function tw(obj, goal, time, delay)
+  local ok, t = pcall(function()
+    return TweenService:Create(
+      obj,
+      TweenInfo.new(time or 0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.Out, 0, false, delay or 0),
+      goal
+    )
+  end)
+  if ok and t then pcall(function() t:Play() end) end
+  return t
+end
+
+--------------------------------------------------------------
+-- Renkler
+--------------------------------------------------------------
+local C = {
+  bg       = Color3.fromRGB(14, 15, 19),
+  card     = Color3.fromRGB(24, 26, 32),
+  cardLine = Color3.fromRGB(45, 48, 57),
+  text     = Color3.fromRGB(240, 241, 244),
+  muted    = Color3.fromRGB(148, 152, 162),
+  accent   = Color3.fromRGB(88, 101, 242),
+  accentHi = Color3.fromRGB(108, 120, 255),
+  danger   = Color3.fromRGB(212, 68, 68),
+}
+
+local CARD_W, CARD_H = 460, 520
+
+--------------------------------------------------------------
+-- Menü
+--------------------------------------------------------------
+local function build()
+  local session = S.SESSION or {}
+  local nick  = session.playert or "Oyuncu"
+  local pname = session.player or "Player"
+
+  local gui = new("ScreenGui", {
+    Name = "LoadSystemMainMenu",
+    ResetOnSpawn = false,
+    IgnoreGuiInset = true,
+    DisplayOrder = 800,
+    ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+  })
+  gui.Parent = CoreGui
+
+  -- arka plan
+  local bg = new("Frame", {
+    Size = UDim2.new(1, 0, 1, 0),
+    BackgroundColor3 = C.bg,
+    BorderSizePixel = 0,
+    ZIndex = 0,
+  }, gui)
+
+  -- sol üst marka
+  local brand = new("TextLabel", {
+    Size = UDim2.fromOffset(320, 30),
+    Position = UDim2.fromOffset(40, 34),
+    BackgroundTransparency = 1,
+    Text = "LOADSYSTEM",
+    TextColor3 = C.text,
+    TextSize = 18,
+    Font = Enum.Font.GothamBold,
+    TextXAlignment = Enum.TextXAlignment.Left,
+    ZIndex = 2,
+  }, bg)
+
+  local brandSub = new("TextLabel", {
+    Size = UDim2.fromOffset(320, 20),
+    Position = UDim2.fromOffset(40, 62),
+    BackgroundTransparency = 1,
+    Text = "v1.0  |  " .. tostring(pname),
+    TextColor3 = C.muted,
+    TextSize = 12,
+    Font = Enum.Font.GothamMedium,
+    TextXAlignment = Enum.TextXAlignment.Left,
+    ZIndex = 2,
+  }, bg)
+
+  -- kart
+  local card = new("Frame", {
+    Size = UDim2.fromOffset(CARD_W, CARD_H),
+    Position = UDim2.fromScale(0.5, 0.5),
+    AnchorPoint = UDim2.fromScale(0.5, 0.5),
+    BackgroundColor3 = C.card,
+    BorderSizePixel = 0,
+    ZIndex = 2,
+  }, bg)
+  round(card, 18)
+  new("UIStroke", { ApplyStrokeMode = Enum.ApplyStrokeMode.Border, Color = C.cardLine, Thickness = 1 }, card)
+
+  local hello = new("TextLabel", {
+    Size = UDim2.fromOffset(CARD_W - 80, 34),
+    Position = UDim2.fromOffset(40, 34),
+    BackgroundTransparency = 1,
+    Text = "HOS GELDIN, " .. string.upper(tostring(nick)),
+    TextColor3 = C.text,
+    TextSize = 21,
+    Font = Enum.Font.GothamBold,
+    TextXAlignment = Enum.TextXAlignment.Left,
+    ZIndex = 3,
+  }, card)
+
+  local sub = new("TextLabel", {
+    Size = UDim2.fromOffset(CARD_W - 80, 22),
+    Position = UDim2.fromOffset(40, 70),
+    BackgroundTransparency = 1,
+    Text = "Oturum acildi. Menuden bir secim yap.",
+    TextColor3 = C.muted,
+    TextSize = 12,
+    Font = Enum.Font.Gotham,
+    TextXAlignment = Enum.TextXAlignment.Left,
+    ZIndex = 3,
+  }, card)
+
+  local accent = new("Frame", {
+    Size = UDim2.fromOffset(56, 4),
+    Position = UDim2.fromOffset(40, 104),
+    BackgroundColor3 = C.accent,
+    BorderSizePixel = 0,
+    ZIndex = 3,
+  }, card)
+  round(accent, 2)
+
+  local function makeMenuButton(text, y, kind)
+    local b = new("TextButton", {
+      Size = UDim2.fromOffset(CARD_W - 80, 54),
+      Position = UDim2.fromOffset(40, y),
+      BackgroundColor3 = (kind == "primary") and C.accent or C.bg,
+      BorderSizePixel = 0,
+      Text = text,
+      TextColor3 = C.text,
+      TextSize = 15,
+      Font = Enum.Font.GothamBold,
+      AutoButtonColor = false,
+      ZIndex = 3,
+    }, card)
+    round(b, 12)
+    if kind ~= "primary" then
+      new("UIStroke", { ApplyStrokeMode = Enum.ApplyStrokeMode.Border, Color = C.cardLine, Thickness = 1 }, b)
+    end
+    b.MouseEnter:Connect(function()
+      tw(b, { BackgroundColor3 = (kind == "primary") and C.accentHi or C.cardLine }, 0.15)
+    end)
+    b.MouseLeave:Connect(function()
+      tw(b, { BackgroundColor3 = (kind == "primary") and C.accent or C.bg }, 0.15)
+    end)
+    return b
+  end
+
+  local playBtn    = makeMenuButton("DEVAM ET", 140, "primary")
+  local setBtn     = makeMenuButton("AYARLAR", 206, "normal")
+  local credBtn    = makeMenuButton("KRED\u{0130}LER", 272, "normal")
+  local exitBtn    = makeMenuButton("CIKIS", 338, "normal")
+
+  local status = new("TextLabel", {
+    Size = UDim2.fromOffset(CARD_W - 80, 24),
+    Position = UDim2.fromOffset(40, 408),
+    BackgroundTransparency = 1,
+    Text = "",
+    TextColor3 = C.muted,
+    TextSize = 12,
+    Font = Enum.Font.Gotham,
+    TextXAlignment = Enum.TextXAlignment.Left,
+    ZIndex = 3,
+  }, card)
+
+  local footer = new("TextLabel", {
+    Size = UDim2.fromOffset(CARD_W - 80, 20),
+    Position = UDim2.fromOffset(40, CARD_H - 44),
+    BackgroundTransparency = 1,
+    Text = "scptr1155-gif/loadsystem  |  " .. tostring(pname) .. " (" .. tostring(nick) .. ")",
+    TextColor3 = C.muted,
+    TextSize = 11,
+    Font = Enum.Font.Gotham,
+    TextXAlignment = Enum.TextXAlignment.Left,
+    ZIndex = 3,
+  }, card)
+
+  -- buton davranışları (yer tutucu aksiyonlar)
+  playBtn.MouseButton1Click:Connect(function() status.Text = "Oyun basladi." end)
+  setBtn.MouseButton1Click:Connect(function() status.Text = "Ayarlar paneli yakinda." end)
+  credBtn.MouseButton1Click:Connect(function() status.Text = "Bu surum loadsystem v1.0." end)
+  exitBtn.MouseButton1Click:Connect(function()
+    status.Text = "Cikis yapildi."
+    status.TextColor3 = C.danger
+  end)
+
+  -- açılış animasyonu
+  card.BackgroundTransparency = 1
+  card.Position = UDim2.fromScale(0.5, 0.53)
+  hello.TextTransparency = 1
+  sub.TextTransparency = 1
+  accent.BackgroundTransparency = 1
+  brand.TextTransparency = 1
+  brandSub.TextTransparency = 1
+  footer.TextTransparency = 1
+
+  tw(card,  { BackgroundTransparency = 0, Position = UDim2.fromScale(0.5, 0.5) }, 0.45)
+  tw(hello, { TextTransparency = 0 }, 0.3, 0.12)
+  tw(sub,   { TextTransparency = 0 }, 0.3, 0.18)
+  tw(accent,{ BackgroundTransparency = 0 }, 0.3, 0.22)
+  tw(brand, { TextTransparency = 0 }, 0.3, 0.05)
+  tw(brandSub, { TextTransparency = 0 }, 0.3, 0.10)
+  tw(footer,{ TextTransparency = 0 }, 0.3, 0.26)
+
+  return {
+    gui = gui,
+    card = card,
+    nickname = nick,
+    player = pname,
+    destroy = function() pcall(function() gui:Destroy() end) end,
+  }
+end
+
+--------------------------------------------------------------
+-- Çalıştır
+--------------------------------------------------------------
+local ok, menu = pcall(build)
+if ok then
+  S.MAIN = menu
+  -- verify bu bayrağı izleyip siyah perdeyi kaldırıyor
+  S.MAIN_READY = true
+end
+
+return {
+  version = "1.0.0",
+  menu = menu,
+  ready = S.MAIN_READY == true,
+}
