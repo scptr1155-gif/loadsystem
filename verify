@@ -542,6 +542,17 @@ local function ghPutFile(path, content, sha, token, message)
 end
 
 --------------------------------------------------------------
+-- REPO DOSYASI (once API: CDN cache'i yok, anlik guncel; hata olursa ham dosya)
+--------------------------------------------------------------
+local function fetchRepoFile(path, token)
+  local info = ghGetFile(path, token)
+  if info and type(info.content) == "string" and #info.content > 0 then
+    return info.content
+  end
+  return fetchText(RAW_BASE .. path .. "?t=" .. tostring(os.time()))
+end
+
+--------------------------------------------------------------
 -- OYUNCU L\u{0131}STES\u{0130} (player dosyas\u{0131})
 -- Bi\u{00E7}im sat\u{0131}r: player:(isim)/playert:(takma ad)/password:(\u{015F}ifre)
 --------------------------------------------------------------
@@ -877,7 +888,7 @@ local function proceedToMainMenu(session)
 
   local function attempt()
     curtain.setText("LOADING MAIN MENU", "ARAYUZ YUKLENIYOR")
-    local code, err = fetchText(RAW_BASE .. FILE_MENU)
+    local code, err = fetchRepoFile(FILE_MENU, TOKEN)
     if not code then
       curtain.error("MAIN MENU YUKLENEMEDI")
       return
@@ -982,7 +993,7 @@ local function main()
 
   -- 2) arayuzu indir
   boot.setText("LOADING", "ARAYUZ INDIRILIYOR")
-  local code, err = fetchText(RAW_BASE .. FILE_GUI)
+  local code, err = fetchRepoFile(FILE_GUI, TOKEN)
   if not code then
     boot.fail("ARAYUZ YUKLENEMEDI")
     return
