@@ -1,0 +1,64 @@
+--[[
+  probe | LOAD SYSTEM — EXECUTOR PROBU
+
+  Executor'un hangi API'leri sagladigini konsola basar.
+  Konsol ciktisini paylasirsan sorunun tam yerini tek turda buluruz.
+
+  Calistir:
+  loadstring(game:HttpGet("https://raw.githubusercontent.com/scptr1155-gif/loadsystem/refs/heads/main/probe"))()
+]]
+
+print("===== loadsystem probe =====")
+
+local function p(label, fn)
+  local ok, res = pcall(fn)
+  print(("%-22s %s"):format(label, ok and tostring(res) or ("HATA: " .. tostring(res))))
+  return ok, res
+end
+
+p("loadstring", function() return type(loadstring) end)
+p("load", function() return type(load) end)
+p("getgenv", function() return type(getgenv) end)
+p("game", function() return type(game) end)
+p("Instance", function() return type(Instance) end)
+p("Enum", function() return type(Enum) end)
+p("Color3", function() return type(Color3) end)
+p("UDim2", function() return type(UDim2) end)
+p("task", function() return type(task) end)
+p("task.spawn", function() return type(task) == "table" and type(task.spawn) or "yok" end)
+p("task.wait", function() return type(task) == "table" and type(task.wait) or "yok" end)
+p("request", function() return type(request) end)
+p("http_request", function() return type(http_request) end)
+p("syn", function() return type(syn) end)
+p("http", function() return type(http) end)
+p("bit32", function() return type(bit32) end)
+p("os.time", function() return type(os) == "table" and type(os.time) or "yok" end)
+p("Players.LocalPlayer", function() return game:GetService("Players").LocalPlayer.Name end)
+p("CoreGui", function() return tostring(game:GetService("CoreGui")) end)
+p("TweenService", function() return tostring(game:GetService("TweenService")) end)
+p("Instance ScreenGui", function() return tostring(Instance.new("ScreenGui")) end)
+
+print("--- ag testi (game:HttpGet) ---")
+local ok, body = pcall(function()
+  return game:HttpGet("https://raw.githubusercontent.com/scptr1155-gif/loadsystem/refs/heads/main/player")
+end)
+if ok then
+  print("HttpGet govdesi uzunluk: " .. tostring(type(body) == "string" and #body or body))
+  if type(body) == "string" then
+    print("ilk satir: " .. tostring(body:match("^[^\n]*")))
+  end
+end
+
+print("--- request testi ---")
+if type(request) == "function" then
+  local ok2, res2 = pcall(function()
+    return request({ Url = "https://raw.githubusercontent.com/scptr1155-gif/loadsystem/refs/heads/main/player", Method = "GET" })
+  end)
+  print("request sonucu:", ok2 and type(res2) or ("HATA: " .. tostring(res2)))
+  if ok2 and type(res2) == "table" then
+    print("  StatusCode:", tostring(res2.StatusCode or res2.Status or res2.code))
+    print("  Body uzunluk:", tostring(type(res2.Body) == "string" and #res2.Body or res2.Body))
+  end
+end
+
+print("===== probe bitti =====")
