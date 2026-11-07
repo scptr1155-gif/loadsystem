@@ -71,6 +71,7 @@ local STR = {
     no_req = "Executor HTTP isteği (request) desteklemiyor.",
     idx_fail = "Index okunamadı", write_fail = "Kod yazılamadı", conflict = "Çakışma, tekrar dene.",
     id_full = "ID sınırına ulaşıldı.",
+    retry_hint = " (Aynı kodla tekrar basarsan yine de yayınlanır.)",
   },
   en = {
     back = "← BACK", title = "Create Script", sub = "Publish your script; anyone can call it by ID",
@@ -84,6 +85,7 @@ local STR = {
     no_req = "Executor does not support HTTP requests (request).",
     idx_fail = "Could not read index", write_fail = "Could not write code", conflict = "Conflict, try again.",
     id_full = "ID limit reached.",
+    retry_hint = " (Press again with the same code to publish anyway.)",
   },
 }
 
@@ -161,6 +163,24 @@ local function decode(s)
   local ok, d = pcall(function() return HttpService:JSONDecode(s) end)
   if ok then return d end
   return nil
+end
+
+-- Görünmez karakterleri (BOM, sıfır genişlikli boşluk, nbsp) temizle
+local function cleanCode(s)
+  s = tostring(s or "")
+  s = s:gsub("\239\187\191", "")
+  s = s:gsub("\226\128[\139-\141]", "")
+  s = s:gsub("\226\129\160", "")
+  s = s:gsub("\194\160", " ")
+  s = s:gsub("\r\n?", "\n")
+  return s
+end
+
+-- Telefon klavyesinin kıvrık tırnaklarını düz tırnağa çevir
+local function fixQuotes(s)
+  s = s:gsub("\226\128[\156\157]", '"')
+  s = s:gsub("\226\128[\152\153]", "'")
+  return s
 end
 
 local function trim(s) return ((tostring(s or "")):match("^%s*(.-)%s*$")) end
@@ -368,6 +388,14 @@ function M.open(ctx)
   stroke(backBtn, C.line)
   backBtn.MouseEnter:Connect(function() tw(backBtn, { BackgroundColor3 = C.cardHi }, 0.12) end)
   backBtn.MouseLeave:Connect(function() tw(backBtn, { BackgroundColor3 = C.card }, 0.12) end)
+  local xBtn = new("TextButton", {
+    Size = UDim2.fromOffset(34, 38), Position = UDim2.fromOffset(WIN_W - PAD - 34, 24), BackgroundColor3 = C.card, BorderSizePixel = 0,
+    Text = "X", TextColor3 = C.text, TextSize = 12, Font = FNT.bold, AutoButtonColor = false, ZIndex = 4,
+  }, window)
+  round(xBtn, 10)
+  stroke(xBtn, C.line)
+  xBtn.MouseEnter:Connect(function() tw(xBtn, { BackgroundColor3 = C.cardHi }, 0.12) end)
+  xBtn.MouseLeave:Connect(function() tw(xBtn, { BackgroundColor3 = C.card }, 0.12) end)
   label(window, T("title"), PAD + 126, 20, 400, 28, 22, FNT.bold, C.text)
   label(window, T("sub"), PAD + 126, 48, 500, 16, 12, FNT.reg, C.muted)
 
@@ -398,18 +426,28 @@ function M.open(ctx)
   pubBtn.MouseEnter:Connect(function() tw(pubBtn, { BackgroundColor3 = accentHi }, 0.12) end)
   pubBtn.MouseLeave:Connect(function() tw(pubBtn, { BackgroundColor3 = accent }, 0.12) end)
 
+  local lastBad = nil
   pubBtn.MouseButton1Click:Connect(function()
     if publishing then return end
     local name = trim(fName.Text):gsub("%c", " ")
     local desc = trim(fDesc.Text):gsub("%c", " ")
-    local code = fCode.Text or ""
+    local code = cleanCode(fCode.Text)
     if #name < 3 or #name > 40 then toast(T("bad_name"), C.danger) return end
     if trim(code) == "" then toast(T("bad_code"), C.danger) return end
     if #code > 200000 then toast(T("too_big"), C.danger) return end
     if #desc > 200 then desc = desc:sub(1, 200) end
-    if type(loadstring) == "function" then
+    if type(loadstring) == "function" and code ~= lastBad then
       local fn, err = loadstring(code)
-      if not fn then toast(T("bad_syntax") .. tostring(err), C.danger) return end
+      if not fn then
+        local fixed = fixQuotes(code)
+        if fixed ~= code and loadstring(fixed) then
+          code = fixed
+        else
+          lastBad = code
+          toast(T("bad_syntax") .. tostring(err) .. T("retry_hint"), C.danger)
+          return
+        end
+      end
     end
     local data = { name = name, desc = desc, code = code, author = nick, image = tonumber(trim(fImage.Text)) }
     publishing = true
@@ -440,6 +478,47 @@ function M.open(ctx)
     close()
     if type(back) == "function" then back() end
   end)
+
+  -- X: küçül -> kareye dön -> "CR" logosu -> kenara git. Logoya basınca geri açılır.
+  local minimized = false
+  local hiddenKids = {}
+  local logoBtn = new("TextButton", {
+    Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Text = "CR", TextColor3 = C.white, TextSize = 22,
+    Font = FNT.bold, AutoButtonColor = false, Visible = false, ZIndex = 100,
+  }, window)
+  local function setMin(on)
+    if on == minimized  then return end
+    minimized = on
+    if on then
+      safe(function() window.ClipsDescendants = true end)
+      tw(window, { Size = UDim2.fromOffset(64, 64), BackgroundColor3 = accent }, 0.3)
+      tw(bg, { BackgroundTransparency = 1 }, 0.3)
+      delay(0.34, function()
+        if not minimized or not alive then return end
+        for _, c in ipairs(window:GetChildren()) do
+          if c ~= logoBtn and c:IsA("GuiObject") then hiddenKids[c] = c.Visible; c.Visible = false end
+        end
+        logoBtn.Visible = true
+        tw(window, { Position = UDim2.new(1, -52, 0.5, 0) }, 0.5)
+      end)
+    else
+      logoBtn.Visible = false
+      tw(window, { Position = UDim2.fromScale(0.5, 0.5) }, 0.3)
+      delay(0.32, function()
+        if minimized or not alive then return end
+        tw(window, { Size = UDim2.fromOffset(WIN_W, WIN_H), BackgroundColor3 = C.panel }, 0.3)
+        tw(bg, { BackgroundTransparency = (ctx.bg == false) and 0 or 1 }, 0.3)
+        delay(0.3, function()
+          if minimized or not alive then return end
+          for c, v in pairs(hiddenKids) do safe(function() c.Visible = v end) end
+          hiddenKids = {}
+          safe(function() window.ClipsDescendants = false end)
+        end)
+      end)
+    end
+  end
+  xBtn.MouseButton1Click:Connect(function() setMin(true) end)
+  logoBtn.MouseButton1Click:Connect(function() setMin(false) end)
 end
 
 return M
