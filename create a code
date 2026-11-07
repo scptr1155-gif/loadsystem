@@ -1,177 +1,175 @@
---[[
-  kod oluştur | SENARYO OLUŞTURMA VE YAYINLAMA (v1.0)
-  =========================================================
-  ana menüdeki CREATE butonunu indirip çalıştırır.
+-- create a code | SCRIPT OLUŞTURMA VE YAYINLAMA (v1.0)
+-- =========================================================
+-- main-menu'deki CREATE düğmesi bu dosyayı indirip çalıştırır.
+--
+-- Döndürdüğü tablo:
+-- publish({name, image, desc, code, author, apiKey}) -> ok:boolean, idVeyaMesaj
+--
+-- Ne yapar:
+-- 1. hub/index.json dosyasını GitHub API ile okur (yoksa boş başlar).
+-- 2. Sıradaki ID'yi alır (1, 2, 3 ...).
+-- 3. Kodu hub/<ID>.lua olarak yazar.
+-- 4. Yeni kaydı hub/index.json'a ekler.
+-- `scripthub` dosyası bu verileri okuyup hub'da gösterir.
+--
+-- API anahtarı: main-menu içindeki CONFIG.API_KEY (S.API_KEY). Boşsa yayınlama
+-- "API anahtarı ayarlanmadı" hatası verir. Anahtar GitHub token'ıdır ve
+-- repoya "Contents: read & write" yetkisi olmalıdır.
+-- UYARI: Anahtarı dosyaya düz yazarsan scripti çalıştıran herkes görebilir.
+-- Gerçek dünya yayını için sonra bir sunucu/API arkasına alınmalı.
 
-  Döndürdüğü tablo:
-    publish({name, image, desc, code, author, apiKey}) -> ok:boolean, idVeyaMesaj
+local G = (type(getgenv) == "function" and getgenv()) or _G
+local S = G.__LOADSYS or {}
 
-  Ne yapar:
-    1. hub/index.json kopyası GitHub API ile okur (yoksa boş başlar).
-    2. Sıradaki ID'yi alır (1, 2, 3...).
-    3. Kodu hub/<ID>.lua olarak yazar.
-    4. Yeni kayıt hub/index.json'a eklenir.
-  `scripthub` dosyasının verilerinin saklandığı hub'da gösterilir.
-
-  API Anahtarı: ana menüdeki CONFIG.API_KEY (S.API_KEY). Boşsa yayınlamak
-  "API anahtarı ayarlanmadı" hatası veriyor. Anahtar GitHub token'ıdır ve
-  repoya "Contents: read & write" yetkisine sahip olmalıdır.
-  UYARI: Anahtarı dosyaya düz yazarsan scripti çalıştıran herkes görebilir.
-  Gerçek dünya yayını için daha sonra bir sunucu/API özelliğinin alınması gerekir.
-]]
-
-yerel G = (type(getgenv) == "function" ve getgenv()) veya _G
-yerel S = G.__LOADSYS veya {}
-
-yerel SAHİP, DEPO, ŞUBE = "scptr1155-gif", "loadsystem", "main"
-yerel API = "https://api.github.com/repos/" .. SAHİP .. "/" .. DEPO .. "/contents/"
-yerel HttpService = oyun:GetService("HttpService")
+local OWNER, REPO, BRANCH = "scptr1155-gif", "loadsystem", "main"
+local API = "https://api.github.com/repos/" .. OWNER .. "/" .. REPO .. "/contents/"
+local HttpService = game:GetService("HttpService")
 
 --------------------------------------------------------------
 -- Base64
 --------------------------------------------------------------
-yerel B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
-yerel B64MAP = {}
+local B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+local B64MAP = {}
 for i = 1, #B64 do B64MAP[B64:sub(i, i)] = i - 1 end
 
-yerel fonksiyon b64encode(veri)
-  yerel çıktı = {}
-  i = 1, #veri, 3 için
-    yerel b1, b2, b3 = veri:byte(i, i + 2)
-    yerel v = (b1 veya 0) * 65536 + (b2 veya 0) * 256 + (b3 veya 0)
-    yerel c1 = math.floor(v / 262144) % 64
-    yerel c2 = math.floor(v / 4096) % 64
-    yerel c3 = math.floor(v / 64) % 64
-    yerel c4 = v % 64
+local function b64encode(data)
+  local out = {}
+  for i = 1, #data, 3 do
+    local b1, b2, b3 = data:byte(i, i + 2)
+    local v = (b1 or 0) * 65536 + (b2 or 0) * 256 + (b3 or 0)
+    local c1 = math.floor(v / 262144) % 64
+    local c2 = math.floor(v / 4096) % 64
+    local c3 = math.floor(v / 64) % 64
+    local c4 = v % 64
     out[#out + 1] = B64:sub(c1 + 1, c1 + 1) .. B64:sub(c2 + 1, c2 + 1)
-    out[#out + 1] = (b2 ve B64:sub(c3 + 1, c3 + 1)) veya "="
-    out[#out + 1] = (b3 ve B64:sub(c4 + 1, c4 + 1)) veya "="
-  son
-  tabloyu birleştirerek döndür
-son
+    out[#out + 1] = (b2 and B64:sub(c3 + 1, c3 + 1)) or "="
+    out[#out + 1] = (b3 and B64:sub(c4 + 1, c4 + 1)) or "="
+  end
+  return table.concat(out)
+end
 
-yerel fonksiyon b64decode(veri)
-  veri = veri:gsub("%s+", "")
-  yerel çıkış, tampon, bitler = {}, 0, 0
-  i = 1 için #veri
-    yerel v = B64MAP[veri:alt(i, i)]
-    eğer v ise o zaman
+local function b64decode(data)
+  data = data:gsub("%s+", "")
+  local out, buf, bits = {}, 0, 0
+  for i = 1, #data do
+    local v = B64MAP[data:sub(i, i)]
+    if v then
       buf = buf * 64 + v
-      bitler = bitler + 6
-      eğer bit sayısı >= 8 ise
-        bitler = bitler - 8
+      bits = bits + 6
+      if bits >= 8 then
+        bits = bits - 8
         out[#out + 1] = string.char(math.floor(buf / (2 ^ bits)) % 256)
-        buf = buf % (2 ^ bit)
-      son
-    son
-  son
-  tabloyu birleştirerek döndür
-son
+        buf = buf % (2 ^ bits)
+      end
+    end
+  end
+  return table.concat(out)
+end
 
 --------------------------------------------------------------
--- HTTP (yürütücü istek fonksiyonu gerekir: başlık oluşturabilmek için)
+-- HTTP (executor request fonksiyonu gerekir: başlık gönderebilmek için)
 --------------------------------------------------------------
-yerel fonksiyon req(url, method, body, headers)
-  yerel fn
+local function req(url, method, body, headers)
+  local fn
   if type(request) == "function" then fn = request
   elseif type(http_request) == "function" then fn = http_request
   elseif type(syn) == "table" and type(syn.request) == "function" then fn = syn.request end
-  Eğer fn değilse, nil döndür, "yürütücü isteği desteklenmiyor".
-  yerel tamam, res = pcall(fn, { Url = url, Method = method, Headers = headers, Body = body })
-  Eğer sorun yoksa veya type(res) ~= "table" ise nil döndür, tostring(res) işlemini sonlandır.
+  if not fn then return nil, "executor request desteklemiyor" end
+  local ok, res = pcall(fn, { Url = url, Method = method, Headers = headers, Body = body })
+  if not ok or type(res) ~= "table" then return nil, tostring(res) end
   return tonumber(res.StatusCode or res.Status) or 0, tostring(res.Body or "")
-son
+end
 
-yerel fonksiyon kod çözme(ler)
-  yerel tamam, d = pcall(function() return HttpService:JSONDecode(s) end)
-  Eğer uygunsa, d'yi döndür.
-  boş döndür
-son
+local function decode(s)
+  local ok, d = pcall(function() return HttpService:JSONDecode(s) end)
+  if ok then return d end
+  return nil
+end
 
-yerel fonksiyon trim(s) return ((tostring(s or "")):match("^%s*(.-)%s*$")) end
+local function trim(s) return ((tostring(s or "")):match("^%s*(.-)%s*$")) end
 
 --------------------------------------------------------------
 -- Yayınla
 --------------------------------------------------------------
-yerel M = {}
+local M = {}
 
-fonksiyon M.publish(d)
+function M.publish(d)
   if type(d) ~= "table" then return false, "gecersiz veri" end
-  yerel anahtar = trim(d.apiKey veya S.API_KEY)
-  if key == "" sonra return false, "API anahtarı ayarlanmadı" end
+  local key = trim(d.apiKey or S.API_KEY)
+  if key == "" then return false, "API anahtari ayarlanmadi" end
 
-  yerel ad = trim(d.name):gsub("[%c]", " ")
-  yerel açıklama = trim(d.desc):gsub("[%c]", " ")
-  yerel yazar = trim(d.author):gsub("[%c]", " ")
-  yerel kod = tostring(d.code veya "")
+  local name = trim(d.name):gsub("[%c]", " ")
+  local desc = trim(d.desc):gsub("[%c]", " ")
+  local author = trim(d.author):gsub("[%c]", " ")
+  local code = tostring(d.code or "")
   if #name < 3 or #name > 40 then return false, "script adi 3-40 karakter olmali" end
   if trim(code) == "" then return false, "kod bos" end
-  #code > 200000 ise false döndürün, "kod cok buyuk (en fazla 200000 karakter)" end
-  Eğer #desc > 200 ise, desc = desc:sub(1, 200) olarak ayarlanır.
-  yerel görüntü = tonumber(d.image)
+  if #code > 200000 then return false, "kod cok buyuk (en fazla 200000 karakter)" end
+  if #desc > 200 then desc = desc:sub(1, 200) end
+  local image = tonumber(d.image)
 
-  yerel h = {
-    ["Kabul Et"] = "application/vnd.github+json",
+  local h = {
+    ["Accept"] = "application/vnd.github+json",
     ["X-GitHub-Api-Version"] = "2022-11-28",
     ["User-Agent"] = "loadsystem-lua",
-    ["Yetkilendirme"] = "Taşıyıcı" .. anahtar,
+    ["Authorization"] = "Bearer " .. key,
     ["Content-Type"] = "application/json",
   }
 
   for _ = 1, 3 do
     -- 1) index oku
-    yerel kod1, gövde1 = req(API .. "hub/index.json?ref=" .. BRANCH .. "&t=" .. tostring(os.time()), "GET", nil, h)
-    Eğer code1 değilse false döndür, tostring(body1) son
-    yerel dizin, sha = { sonraki = 1, komut dosyaları = {} }, nil
-    eğer code1 == 200 ise
-      yerel j = decode(body1)
+    local code1, body1 = req(API .. "hub/index.json?ref=" .. BRANCH .. "&t=" .. tostring(os.time()), "GET", nil, h)
+    if not code1 then return false, tostring(body1) end
+    local idx, sha = { next = 1, scripts = {} }, nil
+    if code1 == 200 then
+      local j = decode(body1)
       if type(j) ~= "table" or not j.sha or type(j.content) ~= "string" then return false, "index okunamadi" end
       sha = j.sha
-      yerel ayrıştırılmış = decode(b64decode(j.content))
+      local parsed = decode(b64decode(j.content))
       if type(parsed) == "table" and type(parsed.scripts) == "table" then idx = parsed end
     elseif code1 == 401 or code1 == 403 then
-      return false, "API anahtarı gecersiz veya yetkisiz (HTTP " .. code1 .. ")"
-    aksi takdirde eğer code1 ~= 404 ise
-      false döndür, "index okunamadi (HTTP " .. tostring(code1) .. ")"
-    son
+      return false, "API anahtari gecersiz veya yetkisiz (HTTP " .. code1 .. ")"
+    elseif code1 ~= 404 then
+      return false, "index okunamadi (HTTP " .. tostring(code1) .. ")"
+    end
 
     -- 2) sıradaki ID
-    yerel kimlik = math.max(1, math.floor(tonumber(idx.next) or 1))
+    local id = math.max(1, math.floor(tonumber(idx.next) or 1))
     for _, e in ipairs(idx.scripts) do
-      yerel eid = tonumber(e.id) veya 0
-      Eğer eid >= id ise, id = eid + 1 olur.
-    son
+      local eid = tonumber(e.id) or 0
+      if eid >= id then id = eid + 1 end
+    end
 
     -- 3) kodu yaz (aynı ID'li dosya varsa bir sonraki ID'yi dene)
-    yerel yazdı = yanlış
+    local wrote = false
     for _ = 1, 5 do
-      yerel cw, bw = req(API .. "hub/" .. tostring(id) .. ".lua", "PUT", HttpService:JSONEncode({
-        mesaj = "hub: komut dosyası #" .. tostring(id),
-        içerik = b64encode(kod),
-        dal = DAL,
-      }), H)
-      eğer cw değilse false döndür, tostring(bw) son
+      local cw, bw = req(API .. "hub/" .. tostring(id) .. ".lua", "PUT", HttpService:JSONEncode({
+        message = "hub: script #" .. tostring(id),
+        content = b64encode(code),
+        branch = BRANCH,
+      }), h)
+      if not cw then return false, tostring(bw) end
       if cw == 200 or cw == 201 then wrote = true break end
-      Eğer cw == 422 ise, id = id + 1
-      aksi takdirde false döndür, "kod yazilamadi (HTTP " .. tostring(cw) .. ")" end
-    son
-    Eğer yazılmamışsa false döndür, "bos ID bulunamadi" son
+      if cw == 422 then id = id + 1
+      else return false, "kod yazilamadi (HTTP " .. tostring(cw) .. ")" end
+    end
+    if not wrote then return false, "bos ID bulunamadi" end
 
     -- 4) index güncelle
     idx.scripts[#idx.scripts + 1] = {
-      id = id, name = name, author = author, desc = desc, image = image veya 0,
-      derecelendirme = 0, kullanımlar = 0, oluşturulma zamanı = os.time(),
+      id = id, name = name, author = author, desc = desc, image = image or 0,
+      rating = 0, uses = 0, created = os.time(),
     }
     idx.next = id + 1
-    yerel yük = { mesaj = "hub: indeks (#" .. tostring(id) .. ")", içerik = b64encode(HttpService:JSONEncode(idx)), dal = DAL }
-    Eğer sha değeri ise payload.sha = sha değerine eşit olmalıdır.
-    yerel ci, bi = req(API .. "hub/index.json", "PUT", HttpService:JSONEncode(payload), h)
-    Eğer ci değilse false döndür, tostring(bi) son
-    Eğer ci == 200 veya ci == 201 ise true döndür, id son
-    Eğer ci ~= 409 ve ci ~= 422 ise false döndür, "index yazilamadi (HTTP " .. tostring(ci) .. ")" end
-    -- çakışma: başkası ayni anda yayınladi, bastan dene
-  son
-  false döndür, "cakisma, tekrar dene"
-son
+    local payload = { message = "hub: index (#" .. tostring(id) .. ")", content = b64encode(HttpService:JSONEncode(idx)), branch = BRANCH }
+    if sha then payload.sha = sha end
+    local ci, bi = req(API .. "hub/index.json", "PUT", HttpService:JSONEncode(payload), h)
+    if not ci then return false, tostring(bi) end
+    if ci == 200 or ci == 201 then return true, id end
+    if ci ~= 409 and ci ~= 422 then return false, "index yazilamadi (HTTP " .. tostring(ci) .. ")" end
+    -- cakisma: baskasi ayni anda yayinladi, bastan dene
+  end
+  return false, "cakisma, tekrar dene"
+end
 
-M'yi döndür
+return M
