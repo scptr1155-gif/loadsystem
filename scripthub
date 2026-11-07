@@ -1,1 +1,95 @@
+--[[
+  scripthub | SCRIPT HUB ANA SAYFA — OKUMA TARAFI (v1.0)
+  =========================================================
+  main-menu'deki SCRIPT HUB düğmesi bu dosyayı indirip çalıştırır.
 
+  Veri düzeni (repoda, herkese açık okunur):
+    hub/index.json   -> {"next":3,"scripts":[{id,name,author,desc,image,rating,uses,created}, ...]}
+    hub/<ID>.lua     -> o scriptin kodu (ID: 1, 2, 3 ... 10000 ...)
+
+  Döndürdüğü tablo (main-menu bunu kullanır):
+    list(sort, page) -> kart listesi   (sort: "new" | "top" | "popular")
+    get(id)          -> {id,name,author,desc,image,rating,uses,code}
+    run(id)          -> scripti ID ile çalıştırır
+
+  Not: hub/index.json henüz yoksa hub hata vermez, boş liste gösterir.
+  İlk script yayınlanınca index.json otomatik oluşturulur (create a code).
+]]
+
+local BASE = "https://raw.githubusercontent.com/scptr1155-gif/loadsystem/refs/heads/main/hub/"
+local PAGE_SIZE = 50
+local HttpService = game:GetService("HttpService")
+
+local function fetch(path)
+  local sep = path:find("?", 1, true) and "&" or "?"
+  local ok, res = pcall(function() return game:HttpGet(BASE .. path .. sep .. "t=" .. tostring(os.time())) end)
+  if not ok or type(res) ~= "string" or #res == 0 then return nil end
+  if res:sub(1, 14) == "404: Not Found" then return nil end
+  return res
+end
+
+local function readIndex()
+  local src = fetch("index.json")
+  if not src then return { next = 1, scripts = {} } end
+  local ok, d = pcall(function() return HttpService:JSONDecode(src) end)
+  if ok and type(d) == "table" and type(d.scripts) == "table" then return d end
+  return { next = 1, scripts = {} }
+end
+
+local function num(v) return tonumber(v) or 0 end
+
+local M = {}
+
+function M.list(sort, page)
+  local idx = readIndex()
+  local items = {}
+  for _, e in ipairs(idx.scripts) do items[#items + 1] = e end
+
+  if sort == "top" then
+    table.sort(items, function(a, b)
+      if num(a.rating) ~= num(b.rating) then return num(a.rating) > num(b.rating) end
+      return num(a.id) > num(b.id)
+    end)
+  elseif sort == "popular" then
+    table.sort(items, function(a, b)
+      if num(a.uses) ~= num(b.uses) then return num(a.uses) > num(b.uses) end
+      return num(a.id) > num(b.id)
+    end)
+  else -- "new"
+    table.sort(items, function(a, b) return num(a.id) > num(b.id) end)
+  end
+
+  page = math.max(1, math.floor(tonumber(page) or 1))
+  local out = {}
+  for i = (page - 1) * PAGE_SIZE + 1, math.min(#items, page * PAGE_SIZE) do
+    out[#out + 1] = items[i]
+  end
+  return out
+end
+
+function M.get(id)
+  id = math.floor(tonumber(id) or 0)
+  if id < 1 then return nil end
+  local idx = readIndex()
+  for _, e in ipairs(idx.scripts) do
+    if num(e.id) == id then
+      local code = fetch(tostring(id) .. ".lua")
+      if not code then return nil end
+      local copy = {}
+      for k, v in pairs(e) do copy[k] = v end
+      copy.code = code
+      return copy
+    end
+  end
+  return nil
+end
+
+function M.run(id)
+  local e = M.get(id)
+  if not e or type(e.code) ~= "string" or e.code == "" then error("bu ID ile script bulunamadi") end
+  local fn, err = loadstring(e.code)
+  if not fn then error(err) end
+  fn()
+end
+
+return M
