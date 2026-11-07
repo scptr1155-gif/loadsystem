@@ -1,19 +1,26 @@
 --[[
-  verify  |  LOAD SYSTEM — ANA KOD (v1.0)
+  verify  |  LOAD SYSTEM — ANA KOD (v1.1.1)
   =========================================================
-  Bu dosya sistemin giri\u{0131} noktas\u{0131}d\u{0131}r.
+  Bu dosya sistemin giriş noktasıdır.
 
-  Ak\u{0131}\u{015f}:
-    1. T\u{00FC}m ekran siyah olur, ortada "LOADING" yazar.
-    2. `verify-gui` dosyas\u{0131} indirilip \u{00E7}al\u{0131}\u{015f}t\u{0131}r (beyaz panel + formlar).
-    3. Beyaz panel a\u{00E7}\u{0131}ld\u{0131}ktan sonra siyah ekran animasyonla kaybolur.
-    4. Oyuncu LOGIN veya CREATE ACCOUNT ile giri\u{015F} yapar.
-    5. Oyuncu bilgileri GitHub'daki `player` dosyas\u{0131}na yaz\u{0131}l\u{0131}r.
-    6. Beyaz panel kapan\u{0131}r -> siyah perde a\u{00E7}\u{0131}l\u{0131}r -> `main-menu` y\u{00FC}klenir.
-    7. main-menu ger\u{00E7}ekten \u{00E7}al\u{0131}\u{015F}ma ba\u{015F}lay\u{0131}nca siyah perde kalkar.
+  Akış:
+    1. Tüm ekran siyah olur, ortada "LOADING" yazar.
+    2. `verify-gui` dosyası indirilip çalıştırılır (beyaz panel + formlar).
+    3. Beyaz panel açıldıktan sonra siyah ekran animasyonla kaybolur.
+    4. Oyuncu LOGIN veya CREATE ACCOUNT ile giriş yapar.
+    5. Oyuncu bilgileri GitHub'daki `player` dosyasına yazılır.
+    6. Beyaz panel kapanır -> siyah perde açılır -> `main-menu` yüklenir.
+    7. main-menu gerçekten çalışmaya başlayınca siyah perde kalkar.
 
-  Bu dosya tek ba\u{015F}\u{0131}ms\u{0131}z \u{00E7}al\u{0131}\u{015F}mak i\u{00E7}in kendi
-  HTTP / Base64 / JSON / \u{015F}ifreleme katman\u{0131}n\u{0131} i\u{00E7}inde bar\u{0131}nd\u{0131}r\u{0130}.
+  Bu dosya tek başına çalışmak için kendi HTTP / Base64 / JSON /
+  şifreleme katmanını içinde barındırır.
+
+  v1.1.1 düzeltmeleri:
+    * buildCurtain: Instance.new("UICorner", {tablo}) hatası giderildi.
+      (Instance.new'in 2. argümanı Instance olmalı, özellik tablosu olamaz.)
+    * Perde oluşturulamazsa akış durmaz, main-menu yine yüklenir.
+    * main-menu yüklenirken eski MAIN_READY bayrağı sıfırlanır.
+    * Ham dosya indirilirken GitHub önbelleği atlanır (?t=zaman).
 ]]
 
 local function safe(fn, ...)
@@ -133,8 +140,9 @@ local FILE_GUI    = "verify-gui"
 local FILE_MENU   = "main-menu"
 local FILE_PLAYER = "player"
 
--- \u{015E}ifreli GitHub API anahtar\u{0131} (PAT). D\u{00FCz metni dahildir, sadece \u{0130}\u{00E7}ilmi\u{015F} hali tutulur.
--- Yeni bir PAT almak i\u{00E7}in:  python3 gen.py --pat <PAT> --patch verify
+-- Şifreli GitHub API anahtarı (PAT). Düz metni dahil değildir, sadece şifrelenmiş hali tutulur.
+-- Yeni bir PAT almak için:  python3 gen.py --pat <PAT> --patch verify
+
 -- Tween calismazsa hedef degerleri aninda uygula
 local function applyGoal(obj, goal)
   if not obj or type(goal) ~= "table" then return end
@@ -561,10 +569,8 @@ local function jsonDecode(str)
 end
 
 --------------------------------------------------------------
--- \u{015E}ifRELEME (GitHub PAT)
--- Anahtar par\u{00E7}alar\u{0131} + XOR/ekleme katmanlar\u{0131} + CRC benzeri b\u{00FC}t\u{00FC}nl\u{00FC} kontrol\u{00FC}.
---------------------------------------------------------------
--- Şifreleme (GitHub PAT)
+-- ŞİFRELEME (GitHub PAT)
+-- Anahtar parçaları + XOR/ekleme katmanları + CRC benzeri bütünlük kontrolü.
 -- DIKKAT: Luau'da native bitwise operatörler (& | ~ << >>) YOKTUR,
 -- sadece `bit32` kütüphanesi vardır. Bu yüzden XOR elle uygulanır;
 -- bit32 varsa o kullanılır, yoksa saf Lua fallback devreye girer.
@@ -665,7 +671,7 @@ end
 -- Executor istek fonksiyonlari askida kalabilir; zaman asimi ile kesilir.
 local function callWithTimeout(fn, timeout)
   local box = { done = false }
-  task.spawn(function()
+  spawn(function()
     local ok, a, b = pcall(fn)
     box.ok, box.a, box.b = ok, a, b
     box.done = true
@@ -777,7 +783,7 @@ local function ghGetFile(path, token)
   local ok, body, code = httpReq(url, "GET", nil, ghHeaders(token))
   if not ok then return nil, "HTTP " .. tostring(code) end
   local data = jsonDecode(body)
-  if type(data) ~= "table" or not data.sha then return nil, "ge\u{00E7}ersiz yan\u{0131}t" end
+  if type(data) ~= "table" or not data.sha then return nil, "geçersiz yanıt" end
   local content = ""
   if type(data.content) == "string" then
     content = b64decode((data.content:gsub("%s", "")))
@@ -798,15 +804,17 @@ local function ghPutFile(path, content, sha, token, message)
   if type(data) == "table" and data.content and data.content.sha then
     return true, data.content.sha, code
   end
-  return false, "beklenmeyen yan\u{0131}t", code
+  return false, "beklenmeyen yanıt", code
 end
 
 --------------------------------------------------------------
--- REPO DOSYASI (once API: CDN cache'i yok, anlik guncel; hata olursa ham dosya)
+-- REPO DOSYASI
+-- Once ham dosya (game:HttpGet / executor GET), olmazsa API.
+-- Ham dosya adresine "?t=zaman" eklenir: raw.githubusercontent
+-- yaklasik 5 dk onbellek tutar, bu sayede guncel dosya hemen gelir.
 --------------------------------------------------------------
 local function fetchRepoFile(path, token)
-  -- Once ham dosya (game:HttpGet / executor GET): en guvenilir yol, header gerekmez
-  local raw = fetchText(RAW_BASE .. path)
+  local raw = fetchText(RAW_BASE .. path .. "?t=" .. tostring(os.time()))
   if raw and #raw > 0 then return raw end
   -- Sonra API (base64 + json)
   local info = ghGetFile(path, token)
@@ -817,8 +825,8 @@ local function fetchRepoFile(path, token)
 end
 
 --------------------------------------------------------------
--- OYUNCU L\u{0131}STES\u{0130} (player dosyas\u{0131})
--- Bi\u{00E7}im sat\u{0131}r: player:(isim)/playert:(takma ad)/password:(\u{015F}ifre)
+-- OYUNCU LİSTESİ (player dosyası)
+-- Biçim satır: player:(isim)/playert:(takma ad)/password:(şifre)
 --------------------------------------------------------------
 local function parsePlayers(text)
   local list = {}
@@ -844,7 +852,6 @@ local function parsePlayers(text)
 end
 
 local function readPlayers(token)
-  -- \u{00D6}ncelikle i\u{00E7}erik API (sha laz\u{0131}m), yetmezse ham dosya
   -- ONCE API: raw.githubusercontent 5 dk onbellek tutar, yeni kayitlar
   -- (yeni hesaplar) ancak API'den aninda gorunur. Sira onemli!
   local info, err = ghGetFile(FILE_PLAYER, token)
@@ -852,7 +859,7 @@ local function readPlayers(token)
     return parsePlayers(info.content), info
   end
   -- API erisilemiyorsa ham dosya (bayat olabilir ama hic yoksa iyi)
-  local raw = fetchText(RAW_BASE .. FILE_PLAYER)
+  local raw = fetchText(RAW_BASE .. FILE_PLAYER .. "?t=" .. tostring(os.time()))
   if raw then return parsePlayers(raw), nil end
   return {}, nil, err
 end
@@ -886,7 +893,7 @@ local function nicknameTaken(list, nick)
 end
 
 --------------------------------------------------------------
--- DO\u{011c}ULAMA
+-- DOĞULAMA
 --------------------------------------------------------------
 local function getPlayerName()
   for _ = 1, 10 do
@@ -902,7 +909,9 @@ local function getPlayerName()
 end
 
 --------------------------------------------------------------
--- G\u{00D6}R\u{00C4}N\u{00DC} EKRAN (siyah + LOADING)
+-- GÖRÜNÜR EKRAN (siyah + LOADING MAIN MENU)
+-- DÜZELTME: UICorner artık Instance.new(class, tablo) ile DEĞİL,
+-- önce oluşturulup özelliği atanarak, sonra Parent verilerek kurulur.
 --------------------------------------------------------------
 local function buildCurtain()
   local gui = Instance.new("ScreenGui")
@@ -959,7 +968,12 @@ local function buildCurtain()
   retry.Visible = false
   retry.ZIndex = 3
   retry.Parent = bg
-  Instance.new("UICorner", { CornerRadius = UDim.new(0, 12) }).Parent = retry
+
+  -- HATALI SATIR BURADAYDI:
+  --   Instance.new("UICorner", { CornerRadius = UDim.new(0, 12) }).Parent = retry
+  local retryCorner = Instance.new("UICorner")
+  retryCorner.CornerRadius = UDim.new(0, 12)
+  retryCorner.Parent = retry
 
   local api = {
     gui = gui, bg = bg, title = title, sub = sub,
@@ -1018,7 +1032,7 @@ local function buildCurtain()
 end
 
 --------------------------------------------------------------
--- ANA AKI\u{015F}
+-- ANA AKIŞ
 --------------------------------------------------------------
 local TOKEN = nil
 local panel = nil
@@ -1061,14 +1075,26 @@ local function sanitize(s)
 end
 
 local function validate(name, nick, pass)
-  if not nick or nick == "" then return false, "Takma ad bo\u{015F} olamaz." end
-  if #nick < 3 or #nick > 20 then return false, "Takma ad 3-20 karakter olmal\u{0131}." end
-  if nick:find("[/%s]") then return false, "Takma ad '/' ve bo\u{015F}luk i\u{00E7}eremez." end
-  if not pass or pass == "" then return false, "\u{015E}ifre bo\u{015F} olamaz." end
-  if #pass < 4 or #pass > 64 then return false, "\u{015E}ifre 4-64 karakter olmal\u{0131}." end
-  if pass:find("[/%s]") then return false, "\u{015E}ifre '/' ve bo\u{015F}luk i\u{00E7}eremez." end
-  if not name or name == "" then return false, "Oyuncu ad\u{0131} bulunamad\u{0131}." end
+  if not nick or nick == "" then return false, "Takma ad boş olamaz." end
+  if #nick < 3 or #nick > 20 then return false, "Takma ad 3-20 karakter olmalı." end
+  if nick:find("[/%s]") then return false, "Takma ad '/' ve boşluk içeremez." end
+  if not pass or pass == "" then return false, "Şifre boş olamaz." end
+  if #pass < 4 or #pass > 64 then return false, "Şifre 4-64 karakter olmalı." end
+  if pass:find("[/%s]") then return false, "Şifre '/' ve boşluk içeremez." end
+  if not name or name == "" then return false, "Oyuncu adı bulunamadı." end
   return true
+end
+
+-- Perde oluşturulamazsa akış durmasın diye boş (sessiz) bir perde nesnesi
+local function dummyCurtain()
+  local noop = function() end
+  return {
+    setText = noop,
+    fadeIn = noop,
+    fadeOut = noop,
+    setRetry = noop,
+    error = function(text) print("[loadsystem] " .. tostring(text)) end,
+  }
 end
 
 local function proceedToMainMenu(session)
@@ -1076,7 +1102,11 @@ local function proceedToMainMenu(session)
   if panel and panel.isOpen and panel.isOpen() then pcall(function() panel.close() end) end
   sleep(0.45)
 
-  local curtain = buildCurtain()
+  local okC, curtain = pcall(buildCurtain)
+  if not okC or type(curtain) ~= "table" then
+    print("[loadsystem] perde olusturulamadi: " .. tostring(curtain))
+    curtain = dummyCurtain()
+  end
   curtain.fadeIn(0.35)
   sleep(0.25)
 
@@ -1084,29 +1114,35 @@ local function proceedToMainMenu(session)
     curtain.setText("LOADING MAIN MENU", "ARAYUZ YUKLENIYOR")
     local code, err = fetchRepoFile(FILE_MENU, TOKEN)
     if not code then
+      print("[loadsystem] main-menu indirilemedi: " .. tostring(err))
       curtain.error("MAIN MENU YUKLENEMEDI")
       return
     end
+
+    -- Onceki denemeden kalan bayragi sifirla (yoksa eski "hazir" yanlis algilanir)
+    S.MAIN_READY = nil
+
     local mod, lerr = loadChunk(code, FILE_MENU)
     if not mod then
+      print("[loadsystem] main-menu hatasi: " .. tostring(lerr))
       curtain.error("MAIN MENU HATASI")
       return
     end
     -- main-menu calistigini dogrula (hazir bayragi)
     local ready = waitFor(function()
       return S.MAIN_READY == true
-    end, 20)
+    end, 6)
     if not ready then
       curtain.error("MAIN MENU BASLAMADI")
       return
     end
     S.MAIN = mod
-    curtain.setText("HAZIR", "HO\u{015e} GELD\u{0130}N")
+    curtain.setText("HAZIR", "HOŞ GELDİN")
     sleep(0.35)
     curtain.fadeOut(0.5)
   end
 
-  curtain.setRetry(function() attempt() end)
+  curtain.setRetry(function() spawn(attempt) end)
   attempt()
 end
 
@@ -1114,19 +1150,19 @@ local function onLogin(nick, pass)
   local list = readPlayers(TOKEN)
   local rec = findPlayer(list, nick, pass)
   if not rec then
-    return false, "Takma ad veya \u{015F}ifre hatal\u{0131}."
+    return false, "Takma ad veya şifre hatalı."
   end
   local session = { player = rec.player, playert = rec.playert, time = os.time() }
   S.SESSION = session
   spawn(function() proceedToMainMenu(session) end)
-  return true, "Giri\u{015F} ba\u{015F}ar\u{0131}l\u{0131}."
+  return true, "Giriş başarılı."
 end
 
 local function onRegister(name, nick, pass)
   local ok, msg = validate(name, nick, pass)
   if not ok then return false, msg end
   if not TOKEN or TOKEN == "" then
-    return false, "Sunucu eri\u{015F}imi yok (API anahtar\u{0131} \u{00E7}\u{00F6}z\u{00FC}lemedi)."
+    return false, "Sunucu erişimi yok (API anahtarı çözülemedi)."
   end
 
   name = sanitize(name)
@@ -1138,7 +1174,7 @@ local function onRegister(name, nick, pass)
 
   local list, info = readPlayers(TOKEN)
   if nicknameTaken(list, nick) then
-    return false, "Bu takma ad zaten al\u{0131}nm\u{0131}\u{015F}."
+    return false, "Bu takma ad zaten alınmış."
   end
 
   -- Mevcut icerik bilinmiyorsa UZERME YAPMA: aksi halde dosyadaki tum
@@ -1158,7 +1194,7 @@ local function onRegister(name, nick, pass)
     if re then sha = re.sha end
   end
   if not sha then
-    return false, "Dosya bilgisi al\u{0131}namad\u{0131}."
+    return false, "Dosya bilgisi alınamadı."
   end
 
   local wrote, werr, wcode = ghPutFile(FILE_PLAYER, content, sha, TOKEN, "loadsystem: add player " .. nick)
@@ -1171,13 +1207,13 @@ local function onRegister(name, nick, pass)
     end
   end
   if not wrote then
-    return false, "Yazma hatas\u{0131}: " .. tostring(werr)
+    return false, "Yazma hatası: " .. tostring(werr)
   end
 
   local session = { player = name, playert = nick, time = os.time() }
   S.SESSION = session
   spawn(function() proceedToMainMenu(session) end)
-  return true, "Hesap olu\u{015F}turuldu."
+  return true, "Hesap oluşturuldu."
 end
 
 local function main()
@@ -1263,6 +1299,6 @@ if not okBoot then
 end
 
 return {
-  version = "1.1.0",
+  version = "1.1.1",
   session = function() return S.SESSION end,
 }
