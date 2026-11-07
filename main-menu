@@ -1,32 +1,17 @@
--- main-menu | LOAD SYSTEM — ANA MENÜ (v3.0.1)
+-- main-menu | LOAD SYSTEM — ANA MENÜ (v3.1.0)
 -- =========================================================
 -- `verify` giriş/kayıt sonrası bu dosyayı çalıştırır. Arayüz kurulunca
 -- S.MAIN_READY = true olur (verify siyah perdeyi buna göre kaldırır).
 --
--- v3.0 — ne değişti:
--- * Arka plan artık oyunun kendi ekranı (şeffaf). AYARLAR > "Oyun arka planı"
--- kapatılırsa koyu arka plan gelir.
--- * KREDİLER silindi.
--- * ANA SAYFA: BAŞLAT + SCRIPT HUB düğmeleri.
--- * SCRIPT HUB: loading ekranı açılır, PROBE_URL indirilip çalışır.
--- İndirilemezse / boşsa / hata verirse loading kapanır, menüde kalınır ve
--- "Sistem daha kurulmadı" hatası gösterilir.
--- * Hub: EN YENİ / EN YÜKSEK PUAN / POPÜLER sekmeleri + ID ile arama
--- (her script bir ID ile çağrılır: 1, 2, 3 ... 10000 ...).
--- * CREATE: loading ekranı açılır, CREATE_URL indirilip çalışır; sonra
--- resim, script adı, açıklama, kod formu açılır.
--- * Dil: TÜRKÇE / ENGLISH. İlk açılışta dil seçme ekranı, sonra Ayarlar'dan.
--- * API anahtarı SONRAYA bırakıldı: CONFIG.API_KEY (şimdilik boş).
---
--- PROBE dosyası (hub arka ucu) şu tabloyu döndürmelidir (hepsi isteğe bağlı):
--- list(sort, page) -> { {id,name,author,rating,uses,image,desc}, ... }
--- sort = "new" | "top" | "popular"
--- get(id)          -> {id,name,author,rating,image,desc,code}   (ID ile çağırma)
--- run(id)          -> scripti çalıştırır (yoksa get(id).code çalıştırılır)
--- CREATE dosyası şu tabloyu döndürmelidir:
--- publish({name,image,desc,code,author,apiKey}) -> ok:boolean, idVeyaMesaj
--- (sunucu yeni script'e sıradaki ID'yi verir)
--- Bu dosyalar S.API_KEY, S.SESSION değerlerini okuyabilir (getgenv().__LOADSYS).
+-- v3.1.0:
+--   * SCRIPT HUB artık ayrı bir bölüm (ayrı ekran): `scripthub` dosyası indirilir,
+--     ana menü kapanır, hub kendi ekranında açılır. Hub'daki GERİ tuşu ana menüyü
+--     yeniden yükler.
+--   * Hub indirilemezse / boşsa / open() yoksa: loading kapanır, ana menüde kalınır,
+--     "Sistem daha kurulmadı" hatası gösterilir.
+--   * Ayarlar (dil, renk, arka plan...) menü ile hub arasında korunur (S.SETTINGS).
+--   * API anahtarı artık burada değil: `create a code` dosyası, loadsystem
+--     deposundaki `api-key` dosyasından okur.
 
 local G = (type(getgenv) == "function" and getgenv()) or _G
 local S = G.__LOADSYS or {}
@@ -37,16 +22,14 @@ G.__LOADSYS = S
 --------------------------------------------------------------
 local BASE = "https://raw.githubusercontent.com/scptr1155-gif/loadsystem/refs/heads/main/"
 local CONFIG = {
-  VERSION       = "3.0.1",
+  VERSION       = "3.1.0",
   REPO          = "scptr1155-gif/loadsystem",
   START_URL     = "",
   RESTART_URL   = BASE .. "verify",
-  PROBE_URL     = BASE .. "scripthub",
-  CREATE_URL    = BASE .. "create%20a%20code",
-  API_KEY       = "", -- SONRAYA: script hub'ın dünyaya yayması için API anahtarı buraya
+  HUB_URL       = BASE .. "scripthub",
+  MENU_URL      = BASE .. "main-menu",
   SETTINGS_FILE = "loadsystem_settings.json",
 }
-S.API_KEY = CONFIG.API_KEY
 
 local ACCENTS = {
   Color3.fromRGB(88, 101, 242), Color3.fromRGB(34, 197, 94), Color3.fromRGB(249, 115, 22),
@@ -124,6 +107,11 @@ safe(function()
     end
   end
 end)
+
+if type(S.SETTINGS) == "table" then
+  for k, v in pairs(S.SETTINGS) do settings[k] = v end
+end
+S.SETTINGS = settings
 
 local function saveSettings()
   safe(function()
@@ -538,7 +526,7 @@ local function build()
   stroke(content, C.line, 1)
 
   local pages = {}
-  for i = 1, 4 do
+  for i = 1, 2 do
     pages[i] = new("Frame", {
       Name = "Page" .. i, Size = UDim2.fromOffset(CW, WIN_H), Position = UDim2.fromOffset(0, 0),
       BackgroundTransparency = 1, Visible = false, ZIndex = 2,
@@ -785,227 +773,6 @@ local function build()
   end)
 
   ------------------------------------------------------------
-  -- Sayfa 3: SCRIPT HUB
-  ------------------------------------------------------------
-  local hubPage = pages[3]
-  pageHeader(hubPage, "hub_title", "hub_sub")
-  local createBtn = new("TextButton", {
-    Size = UDim2.fromOffset(130, 36), Position = UDim2.fromOffset(CW - PAD - 130, 28), BorderSizePixel = 0,
-    Text = "", TextColor3 = C.white, TextSize = 13, Font = F.bold, AutoButtonColor = false, ZIndex = 4,
-  }, hubPage)
-  round(createBtn, 10)
-  useAccent(createBtn, "BackgroundColor3")
-  regText(createBtn, "create")
-  createBtn.MouseEnter:Connect(function() tw(createBtn, { BackgroundColor3 = accentHi }, 0.12) end)
-  createBtn.MouseLeave:Connect(function() tw(createBtn, { BackgroundColor3 = accent }, 0.12) end)
-
-  local hubSort = "new"
-  local TABS = { { "new", "t_new" }, { "top", "t_top" }, { "popular", "t_pop" } }
-  local tabBtns = {}
-  for i, t in ipairs(TABS) do
-    local b = new("TextButton", {
-      Size = UDim2.fromOffset(118, 30), Position = UDim2.fromOffset(PAD + (i - 1) * 124, 94), BackgroundColor3 = C.card,
-      BorderSizePixel = 0, Text = "", TextColor3 = C.muted, TextSize = 10, Font = F.bold, AutoButtonColor = false, ZIndex = 4,
-    }, hubPage)
-    round(b, 9)
-    stroke(b, C.line, 1)
-    regText(b, t[2])
-    tabBtns[i] = b
-    b.MouseButton1Click:Connect(function()
-      hubSort = t[1]
-      refreshTabs()
-      if refreshHub then refreshHub() end
-    end)
-  end
-  refreshTabs = function()
-    for i, b in ipairs(tabBtns) do
-      local on = (TABS[i][1] == hubSort)
-      tw(b, { BackgroundColor3 = on and accent or C.card, TextColor3 = on and C.white or C.muted }, 0.2)
-    end
-  end
-
-  local idFrame = new("Frame", {
-    Size = UDim2.fromOffset(112, 30), Position = UDim2.fromOffset(PAD + 376, 94), BackgroundColor3 = C.card, BorderSizePixel = 0, ZIndex = 3,
-  }, hubPage)
-  round(idFrame, 9)
-  stroke(idFrame, C.line, 1)
-  local idBox = new("TextBox", {
-    Size = UDim2.new(1, -16, 1, 0), Position = UDim2.fromOffset(8, 0), BackgroundTransparency = 1, Text = "",
-    PlaceholderText = "", PlaceholderColor3 = C.faint, TextColor3 = C.text, TextSize = 12, Font = F.med,
-    ClearTextOnFocus = false, TextXAlignment = AL, ZIndex = 4,
-  }, idFrame)
-  regText(idBox, "id_ph", "PlaceholderText")
-  local goBtn = new("TextButton", {
-    Size = UDim2.fromOffset(60, 30), Position = UDim2.fromOffset(PAD + 512, 94), BackgroundColor3 = C.cardHi,
-    BorderSizePixel = 0, Text = "", TextColor3 = C.text, TextSize = 11, Font = F.bold, AutoButtonColor = false, ZIndex = 4,
-  }, hubPage)
-  round(goBtn, 9)
-  regText(goBtn, "go")
-
-  local scroll = new("ScrollingFrame", {
-    Size = UDim2.fromOffset(IW, 352), Position = UDim2.fromOffset(PAD, 138), BackgroundTransparency = 1, BorderSizePixel = 0,
-    ScrollBarThickness = 3, CanvasSize = UDim2.fromOffset(0, 0), AutomaticCanvasSize = Enum.AutomaticSize.Y, ZIndex = 3,
-  }, hubPage)
-  new("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder }, scroll)
-
-  local function hubApi() return (type(S.HUB) == "table") and S.HUB or {} end
-
-  local function clearList()
-    for _, c in ipairs(scroll:GetChildren()) do
-      if c.Name == "Card" or c.Name == "Empty" then safe(function() c:Destroy() end) end
-    end
-  end
-
-  local function showEmpty(key)
-    clearList()
-    local l = label(scroll, "", 0, 0, IW, 80, 13, F.med, C.faint, AC, { TextWrapped = true, Name = "Empty" })
-    regText(l, key)
-  end
-
-  local function runEntry(entry)
-    spawn(function()
-      local api = hubApi()
-      local ok, err = pcall(function()
-        if type(api.run) == "function" then
-          api.run(entry.id)
-        else
-          local e = entry
-          if not e.code and type(api.get) == "function" then e = api.get(entry.id) end
-          if type(e) ~= "table" or type(e.code) ~= "string" or e.code == "" then error("kod yok") end
-          local fn, cerr = loadstring(e.code)
-          if not fn then error(cerr) end
-          fn()
-        end
-      end)
-      if ok then toast(T("run_ok"), C.ok) else toast(T("run_fail") .. tostring(err), C.danger) end
-    end)
-  end
-
-  local function renderEntries(list)
-    clearList()
-    if type(list) ~= "table" or #list == 0 then showEmpty("empty") return end
-    for i, e in ipairs(list) do
-      if i > 60 then break end
-      if type(e) == "table" then
-        local card = new("Frame", {
-          Name = "Card", Size = UDim2.fromOffset(IW - 6, 64), BackgroundColor3 = C.card, BorderSizePixel = 0,
-          LayoutOrder = i, ZIndex = 3,
-        }, scroll)
-        round(card, 12)
-        stroke(card, C.line, 1)
-        local thumb = new("ImageLabel", {
-          Size = UDim2.fromOffset(46, 46), Position = UDim2.fromOffset(9, 9), BackgroundColor3 = C.cardHi,
-          BorderSizePixel = 0, ScaleType = Enum.ScaleType.Crop, ZIndex = 4,
-        }, card)
-        round(thumb, 9)
-        local imgId = tonumber(e.image)
-        if imgId then safe(function() thumb.Image = "rbxassetid://" .. tostring(imgId) end) end
-        label(card, tostring(e.name or "?"), 64, 9, IW - 220, 20, 13, F.bold, C.text, AL,
-          { ZIndex = 4, TextTruncate = Enum.TextTruncate.AtEnd })
-        local r = tonumber(e.rating)
-        local info = T("by") .. " " .. tostring(e.author or "?") .. "   ID #" .. tostring(e.id or "?")
-          .. (r and ("   ★ " .. string.format("%.1f", r)) or "")
-        label(card, info, 64, 31, IW - 220, 18, 11, F.reg, C.muted, AL, { ZIndex = 4, TextTruncate = Enum.TextTruncate.AtEnd })
-        local rb = new("TextButton", {
-          Size = UDim2.fromOffset(92, 32), Position = UDim2.fromOffset(IW - 6 - 104, 16), BorderSizePixel = 0,
-          Text = "", TextColor3 = C.white, TextSize = 11, Font = F.bold, AutoButtonColor = false, ZIndex = 4,
-        }, card)
-        round(rb, 9)
-        useAccent(rb, "BackgroundColor3")
-        regText(rb, "run")
-        rb.MouseButton1Click:Connect(function() runEntry(e) end)
-      end
-    end
-  end
-
-  refreshHub = function()
-    local api = hubApi()
-    if type(api.list) ~= "function" then showEmpty("empty") return end
-    local sort = hubSort
-    spawn(function()
-      local ok, res = pcall(api.list, sort, 1)
-      if not alive or sort ~= hubSort then return end
-      if ok then renderEntries(res) else showEmpty("empty") end
-    end)
-  end
-
-  local function searchId()
-    local id = tonumber(trim(idBox.Text))
-    if not id or id < 1 or id ~= math.floor(id) then toast(T("bad_id"), C.danger) return end
-    local api = hubApi()
-    if type(api.get) ~= "function" then showEmpty("empty") return end
-    spawn(function()
-      local ok, e = pcall(api.get, id)
-      if not alive then return end
-      if ok and type(e) == "table" then renderEntries({ e }) else showEmpty("none_found") end
-    end)
-  end
-  goBtn.MouseButton1Click:Connect(searchId)
-  idBox.FocusLost:Connect(function(enter) if enter then searchId() end end)
-
-  ------------------------------------------------------------
-  -- Sayfa 4: CREATE
-  ------------------------------------------------------------
-  local cp = pages[4]
-  pageHeader(cp, "c_title", "c_sub")
-  local function inputBox(y, h, key, multi)
-    local f = new("Frame", {
-      Size = UDim2.fromOffset(IW, h), Position = UDim2.fromOffset(PAD, y), BackgroundColor3 = C.card, BorderSizePixel = 0, ZIndex = 3,
-    }, cp)
-    round(f, 10)
-    stroke(f, C.line, 1)
-    local b = new("TextBox", {
-      Size = UDim2.new(1, -24, 1, -(multi and 16 or 0)), Position = UDim2.fromOffset(12, multi and 8 or 0),
-      BackgroundTransparency = 1, Text = "", PlaceholderText = "", PlaceholderColor3 = C.faint, TextColor3 = C.text,
-      TextSize = 13, Font = F.reg, ClearTextOnFocus = false, MultiLine = multi and true or false,
-      TextWrapped = multi and true or false, TextXAlignment = AL,
-      TextYAlignment = multi and Enum.TextYAlignment.Top or Enum.TextYAlignment.Center, ZIndex = 4,
-    }, f)
-    regText(b, key, "PlaceholderText")
-    return b
-  end
-  local fName  = inputBox(96, 40, "f_name", false)
-  local fImage = inputBox(144, 40, "f_image", false)
-  local fDesc  = inputBox(192, 40, "f_desc", false)
-  local fCode  = inputBox(240, 180, "f_code", true)
-
-  local pubBtn = new("TextButton", {
-    Size = UDim2.fromOffset(IW, 46), Position = UDim2.fromOffset(PAD, 432), BorderSizePixel = 0,
-    Text = "", TextColor3 = C.white, TextSize = 14, Font = F.bold, AutoButtonColor = false, ZIndex = 4,
-  }, cp)
-  round(pubBtn, 12)
-  useAccent(pubBtn, "BackgroundColor3")
-  regText(pubBtn, "publish")
-  pubBtn.MouseEnter:Connect(function() tw(pubBtn, { BackgroundColor3 = accentHi }, 0.12) end)
-  pubBtn.MouseLeave:Connect(function() tw(pubBtn, { BackgroundColor3 = accent }, 0.12) end)
-
-  local publishing = false
-  pubBtn.MouseButton1Click:Connect(function()
-    if publishing then return end
-    local name, code = trim(fName.Text), fCode.Text or ""
-    if #name < 3 or #name > 40 then toast(T("bad_name"), C.danger) return end
-    if trim(code) == "" then toast(T("bad_code"), C.danger) return end
-    local mod = S.CREATE
-    if type(mod) ~= "table" or type(mod.publish) ~= "function" then toast(T("not_ready"), C.danger) return end
-    publishing = true
-    toast(T("pub_ing"), accent)
-    spawn(function()
-      local ok, res, msg = pcall(mod.publish, {
-        name = name, image = tonumber(trim(fImage.Text)), desc = trim(fDesc.Text), code = code,
-        author = nick, apiKey = S.API_KEY,
-      })
-      publishing = false
-      if not alive then return end
-      if ok and res == true then
-        toast(T("pub_ok") .. tostring(msg or "?"), C.ok)
-        safe(function() fName.Text, fImage.Text, fDesc.Text, fCode.Text = "", "", "", "" end)
-      else
-        toast(T("pub_fail") .. tostring((ok and msg) or res or "?"), C.danger)
-      end
-    end)
-  end)
-
-  ------------------------------------------------------------
   -- Bildirim
   ------------------------------------------------------------
   local toastFrame = new("Frame", {
@@ -1089,43 +856,51 @@ local function build()
     delay(0.35, function() safe(function() loadOv.Visible = false end) end)
   end
 
-  -- Uzak modülü yükle; başarısızsa loading kapanır, menüde kalınır, hata gösterilir
+  -- SCRIPT HUB: ayrı bölüm. Başarısızsa loading kapanır, menüde kalınır, hata gösterilir.
   local busyLoad = false
-  ensureModule = function(url, okKey, modKey, titleKey, onOk)
-    if S[okKey] then onOk() return end
+  local function fallbackMenu()
+    -- Hub açılamazsa ana menüyü yeniden yükle (kullanıcı ekransız kalmasın)
+    pcall(function()
+      S.MAIN_READY = nil
+      local fn = loadstring(game:HttpGet(CONFIG.MENU_URL .. "?t=" .. tostring(os.time())))
+      fn()
+    end)
+  end
+  local function openHubScreen()
     if busyLoad or closing then return end
     busyLoad = true
-    showLoading(titleKey)
+    showLoading("ld_hub")
     spawn(function()
       local t0 = os.clock()
-      local ok, mod = fetchLoad(url)
+      local ok, mod = fetchLoad(CONFIG.HUB_URL)
+      if ok and not (type(mod) == "table" and type(mod.open) == "function") then
+        ok, mod = false, "scripthub open() fonksiyonu yok"
+      end
       local rest = 1.0 - (os.clock() - t0)
       if rest > 0 then sleep(rest) end
       busyLoad = false
       if not alive then return end
       if ok then
-        S[okKey] = true
-        S[modKey] = mod
-        hideLoading()
-        onOk()
+        local ctx = {
+          lang = settings.lang or "tr", accent = accent, bg = settings.bg, anim = settings.anim,
+          nick = nick, player = pname, menuUrl = CONFIG.MENU_URL,
+        }
+        closeMenu(function()
+          local okO, errO = pcall(mod.open, ctx)
+          if not okO then
+            print("[main-menu] hub acilamadi: " .. tostring(errO))
+            fallbackMenu()
+          end
+        end)
       else
-        print("[main-menu] " .. tostring(titleKey) .. " basarisiz: " .. tostring(mod))
+        print("[main-menu] scripthub basarisiz: " .. tostring(mod))
         hideLoading()
         sleep(0.35)
         toast(T("not_ready"), C.danger)
       end
     end)
   end
-
-  hubBtn.MouseButton1Click:Connect(function()
-    ensureModule(CONFIG.PROBE_URL, "HUB_OK", "HUB", "ld_hub", function()
-      goTo(3)
-      refreshHub()
-    end)
-  end)
-  createBtn.MouseButton1Click:Connect(function()
-    ensureModule(CONFIG.CREATE_URL, "CREATE_OK", "CREATE", "ld_create", function() goTo(4) end)
-  end)
+  hubBtn.MouseButton1Click:Connect(openHubScreen)
 
   ------------------------------------------------------------
   -- Çıkış onay penceresi
@@ -1327,9 +1102,7 @@ local function build()
   refreshBgToggle()
   refreshScale()
   refreshLang2()
-  refreshTabs()
   applyAnim()
-  showEmpty("empty")
 
   local target = computeScale()
   if settings.anim then
