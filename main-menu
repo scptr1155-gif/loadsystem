@@ -896,7 +896,7 @@ local function build()
         print("[main-menu] scripthub basarisiz: " .. tostring(mod))
         hideLoading()
         sleep(0.35)
-        toast(T("not_ready"), C.danger)
+        toast(T("not_ready") .. " [" .. tostring(mod):sub(1, 48) .. "]", C.danger)
       end
     end)
   end
