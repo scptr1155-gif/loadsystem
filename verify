@@ -1,27 +1,15 @@
---[[
-  verify  |  LOAD SYSTEM — ANA KOD (v1.1.1)
-  =========================================================
-  Bu dosya sistemin giriş noktasıdır.
-
-  Akış:
-    1. Tüm ekran siyah olur, ortada "LOADING" yazar.
-    2. `verify-gui` dosyası indirilip çalıştırılır (beyaz panel + formlar).
-    3. Beyaz panel açıldıktan sonra siyah ekran animasyonla kaybolur.
-    4. Oyuncu LOGIN veya CREATE ACCOUNT ile giriş yapar.
-    5. Oyuncu bilgileri GitHub'daki `player` dosyasına yazılır.
-    6. Beyaz panel kapanır -> siyah perde açılır -> `main-menu` yüklenir.
-    7. main-menu gerçekten çalışmaya başlayınca siyah perde kalkar.
-
-  Bu dosya tek başına çalışmak için kendi HTTP / Base64 / JSON /
-  şifreleme katmanını içinde barındırır.
-
-  v1.1.1 düzeltmeleri:
-    * buildCurtain: Instance.new("UICorner", {tablo}) hatası giderildi.
-      (Instance.new'in 2. argümanı Instance olmalı, özellik tablosu olamaz.)
-    * Perde oluşturulamazsa akış durmaz, main-menu yine yüklenir.
-    * main-menu yüklenirken eski MAIN_READY bayrağı sıfırlanır.
-    * Ham dosya indirilirken GitHub önbelleği atlanır (?t=zaman).
-]]
+-- verify | LOAD SYSTEM — ANA KOD (v1.1.2)
+-- =========================================================
+-- Bu dosya sistemin giriş noktasıdır.
+-- Akış:
+--   1. Tüm ekran siyah olur, ortada "LOADING" yazar.
+--   2. `verify-gui` indirilip çalıştırılır (beyaz panel + formlar).
+--   3. Beyaz panel açılınca siyah ekran kaybolur.
+--   4. Oyuncu LOGIN veya CREATE ACCOUNT ile giriş yapar.
+--   5. Oyuncu bilgileri GitHub'daki `player` dosyasına yazılır.
+--   6. Beyaz panel kapanır -> siyah perde -> `main-menu` yüklenir.
+--   7. main-menu çalışınca siyah perde kalkar.
+-- v1.1.2: loadChunk derleme hatasında hatalı satırı ve dosyanın ilk satırını yazdırır.
 
 local function safe(fn, ...)
   local ok, a, b = pcall(fn, ...)
@@ -29,7 +17,6 @@ local function safe(fn, ...)
   return false, a
 end
 
--- Ortam: getgenv yoksa veya salt-okunur olsa da sistem calismaya devam etmeli
 local G = {}
 do
   local ok, g = safe(function()
@@ -46,7 +33,6 @@ do
 end
 safe(function() G.__LOADSYS = S end)
 
--- Temel yardimcilar (tum erisimler korumali)
 local function mk(class, props)
   local ok, o = safe(function() return Instance.new(class) end)
   if not ok or not o then return nil end
@@ -97,11 +83,6 @@ local function alignX(name)
   return ok and v or nil
 end
 
-local function alignY(name)
-  local ok, v = safe(function() return Enum.TextYAlignment[name] end)
-  return ok and v or nil
-end
-
 local function getService(name)
   local ok, s = pcall(function() return game:GetService(name) end)
   if ok and s then return s end
@@ -112,7 +93,6 @@ local Players      = getService("Players")
 local TweenService = getService("TweenService")
 local CoreGui      = getService("CoreGui")
 
--- GUI ekranı: önce CoreGui, olmazsa PlayerGui (bazı executor'larda CoreGui kapalı olur)
 local function attachGui(gui)
   if CoreGui then
     local ok = pcall(function() gui.Parent = CoreGui end)
@@ -140,10 +120,6 @@ local FILE_GUI    = "verify-gui"
 local FILE_MENU   = "main-menu"
 local FILE_PLAYER = "player"
 
--- Şifreli GitHub API anahtarı (PAT). Düz metni dahil değildir, sadece şifrelenmiş hali tutulur.
--- Yeni bir PAT almak için:  python3 gen.py --pat <PAT> --patch verify
-
--- Tween calismazsa hedef degerleri aninda uygula
 local function applyGoal(obj, goal)
   if not obj or type(goal) ~= "table" then return end
   for k, v in pairs(goal) do
@@ -313,7 +289,6 @@ local function buildBoot()
   return boot
 end
 
--- EKRAN ILK OLUSTURULUR: sonradan hata olsa bile kullanici gorur
 local BOOT = (function()
   local ok, b = safe(buildBoot)
   if ok and type(b) == "table" then return b end
@@ -328,7 +303,7 @@ local CIPHER = {
 }
 
 --------------------------------------------------------------
--- YARDIMCI: ZAMAN
+-- ZAMAN
 --------------------------------------------------------------
 local function sleep(s)
   s = s or 0
@@ -345,7 +320,7 @@ local function spawn(fn, ...)
 end
 
 --------------------------------------------------------------
--- BASE64 (saf Lua)
+-- BASE64
 --------------------------------------------------------------
 local B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
 local B64MAP = {}
@@ -391,7 +366,7 @@ local function b64decode(data)
 end
 
 --------------------------------------------------------------
--- JSON (saf Lua)
+-- JSON
 --------------------------------------------------------------
 local function jsonEscape(s)
   s = tostring(s)
@@ -570,13 +545,7 @@ end
 
 --------------------------------------------------------------
 -- ŞİFRELEME (GitHub PAT)
--- Anahtar parçaları + XOR/ekleme katmanları + CRC benzeri bütünlük kontrolü.
--- DIKKAT: Luau'da native bitwise operatörler (& | ~ << >>) YOKTUR,
--- sadece `bit32` kütüphanesi vardır. Bu yüzden XOR elle uygulanır;
--- bit32 varsa o kullanılır, yoksa saf Lua fallback devreye girer.
 --------------------------------------------------------------
-local U32 = 0xFFFFFFFF
-
 local function u32(x)
   x = x % 4294967296
   if x < 0 then x = x + 4294967296 end
@@ -585,7 +554,6 @@ end
 
 local BIT32 = (type(bit32) == "table") and bit32 or nil
 
--- 32-bit XOR
 local function bxor32(a, b)
   if BIT32 and type(BIT32.bxor) == "function" then
     return BIT32.bxor(u32(a), u32(b))
@@ -625,9 +593,9 @@ local function keystream(key, n)
   local out = {}
   for i = 1, n do
     local x = state
-    x = bxor32(x, u32(x * 8192))         -- x << 13
-    x = bxor32(x, math.floor(x / 131072)) -- x >> 17
-    x = bxor32(x, u32(x * 32))           -- x << 5
+    x = bxor32(x, u32(x * 8192))
+    x = bxor32(x, math.floor(x / 131072))
+    x = bxor32(x, u32(x * 32))
     state = u32(x)
     out[i] = string.char(state % 256)
   end
@@ -658,17 +626,15 @@ local function decryptBlob(keyParts, blob)
 end
 
 --------------------------------------------------------------
--- HTTP KATMANI
+-- HTTP
 --------------------------------------------------------------
 local function httpGetNative(url)
-  -- Roblox native GET: executor ortaminda en guvenilir yol (header gonderemez)
   local ok, res = pcall(function() return game:HttpGet(url) end)
   if not ok or type(res) ~= "string" or #res == 0 then return nil end
   if res:sub(1, 14) == "404: Not Found" then return nil end
   return res
 end
 
--- Executor istek fonksiyonlari askida kalabilir; zaman asimi ile kesilir.
 local function callWithTimeout(fn, timeout)
   local box = { done = false }
   spawn(function()
@@ -693,14 +659,12 @@ local function httpReq(url, method, body, headers)
   local lastErr = "bilinmeyen hata"
   local TIMEOUT = 12
 
-  -- 1) game:HttpGet (yalnizca GET ve auth gerektirmiyorsa)
   if method == "GET" and not needAuth then
     local res = httpGetNative(url)
     if res then return true, res, 200 end
     lastErr = "game:HttpGet basarisiz"
   end
 
-  -- 2) Executor ve oyun ici HTTP saglayicilari (zaman asimli)
   local providers = {}
   if type(request) == "function" then
     providers[#providers + 1] = function()
@@ -778,7 +742,6 @@ local function ghHeaders(token)
 end
 
 local function ghGetFile(path, token)
-  -- "t" parametresi CDN onbellegini atlatir (yazma sonrasi bayat okuma olmasin)
   local url = API_BASE .. path .. "?ref=" .. BRANCH .. "&t=" .. tostring(os.time())
   local ok, body, code = httpReq(url, "GET", nil, ghHeaders(token))
   if not ok then return nil, "HTTP " .. tostring(code) end
@@ -807,16 +770,9 @@ local function ghPutFile(path, content, sha, token, message)
   return false, "beklenmeyen yanıt", code
 end
 
---------------------------------------------------------------
--- REPO DOSYASI
--- Once ham dosya (game:HttpGet / executor GET), olmazsa API.
--- Ham dosya adresine "?t=zaman" eklenir: raw.githubusercontent
--- yaklasik 5 dk onbellek tutar, bu sayede guncel dosya hemen gelir.
---------------------------------------------------------------
 local function fetchRepoFile(path, token)
   local raw = fetchText(RAW_BASE .. path .. "?t=" .. tostring(os.time()))
   if raw and #raw > 0 then return raw end
-  -- Sonra API (base64 + json)
   local info = ghGetFile(path, token)
   if info and type(info.content) == "string" and #info.content > 0 then
     return info.content
@@ -826,7 +782,7 @@ end
 
 --------------------------------------------------------------
 -- OYUNCU LİSTESİ (player dosyası)
--- Biçim satır: player:(isim)/playert:(takma ad)/password:(şifre)
+-- Satır biçimi: player:(isim)/playert:(takma ad)/password:(şifre)
 --------------------------------------------------------------
 local function parsePlayers(text)
   local list = {}
@@ -852,13 +808,10 @@ local function parsePlayers(text)
 end
 
 local function readPlayers(token)
-  -- ONCE API: raw.githubusercontent 5 dk onbellek tutar, yeni kayitlar
-  -- (yeni hesaplar) ancak API'den aninda gorunur. Sira onemli!
   local info, err = ghGetFile(FILE_PLAYER, token)
   if info then
     return parsePlayers(info.content), info
   end
-  -- API erisilemiyorsa ham dosya (bayat olabilir ama hic yoksa iyi)
   local raw = fetchText(RAW_BASE .. FILE_PLAYER .. "?t=" .. tostring(os.time()))
   if raw then return parsePlayers(raw), nil end
   return {}, nil, err
@@ -892,9 +845,6 @@ local function nicknameTaken(list, nick)
   return false
 end
 
---------------------------------------------------------------
--- DOĞULAMA
---------------------------------------------------------------
 local function getPlayerName()
   for _ = 1, 10 do
     local ok, plr = pcall(function() return Players.LocalPlayer end)
@@ -909,9 +859,7 @@ local function getPlayerName()
 end
 
 --------------------------------------------------------------
--- GÖRÜNÜR EKRAN (siyah + LOADING MAIN MENU)
--- DÜZELTME: UICorner artık Instance.new(class, tablo) ile DEĞİL,
--- önce oluşturulup özelliği atanarak, sonra Parent verilerek kurulur.
+-- SİYAH PERDE (LOADING MAIN MENU)
 --------------------------------------------------------------
 local function buildCurtain()
   local gui = Instance.new("ScreenGui")
@@ -969,8 +917,6 @@ local function buildCurtain()
   retry.ZIndex = 3
   retry.Parent = bg
 
-  -- HATALI SATIR BURADAYDI:
-  --   Instance.new("UICorner", { CornerRadius = UDim.new(0, 12) }).Parent = retry
   local retryCorner = Instance.new("UICorner")
   retryCorner.CornerRadius = UDim.new(0, 12)
   retryCorner.Parent = retry
@@ -1037,6 +983,7 @@ end
 local TOKEN = nil
 local panel = nil
 
+-- Derleme hatasında hatalı satırı ve dosyanın ilk satırını konsola yazar
 local function loadChunk(code, label)
   if type(code) ~= "string" or code == "" then return nil, "bos kod" end
   local chunk, err
@@ -1047,7 +994,18 @@ local function loadChunk(code, label)
   else
     return nil, "loadstring bulunamadi"
   end
-  if not chunk then return nil, tostring(err) end
+  if not chunk then
+    local ln = tonumber(tostring(err):match(":(%d+):"))
+    local n = 0
+    for line in (code .. "\n"):gmatch("(.-)\n") do
+      n = n + 1
+      if n == 1 or n == ln then
+        print("[loadsystem] " .. tostring(label) .. " satir " .. n .. ": " .. line:sub(1, 120))
+      end
+    end
+    print("[loadsystem] " .. tostring(label) .. " uzunluk: " .. #code)
+    return nil, tostring(err)
+  end
   local ok, mod = pcall(chunk)
   if not ok then return nil, tostring(mod) end
   return mod
@@ -1063,7 +1021,6 @@ local function waitFor(cond, timeout)
   return cond()
 end
 
--- Kaydedilecek değerlerde "(" ")" gibi karakterler olmasın (satır formatı bozulmasın)
 local function sanitize(s)
   s = tostring(s or "")
   s = s:gsub("[%(%)%[%]%{%}<>%\"'`]", "")
@@ -1085,7 +1042,6 @@ local function validate(name, nick, pass)
   return true
 end
 
--- Perde oluşturulamazsa akış durmasın diye boş (sessiz) bir perde nesnesi
 local function dummyCurtain()
   local noop = function() end
   return {
@@ -1119,7 +1075,6 @@ local function proceedToMainMenu(session)
       return
     end
 
-    -- Onceki denemeden kalan bayragi sifirla (yoksa eski "hazir" yanlis algilanir)
     S.MAIN_READY = nil
 
     local mod, lerr = loadChunk(code, FILE_MENU)
@@ -1128,7 +1083,6 @@ local function proceedToMainMenu(session)
       curtain.error("MAIN MENU HATASI")
       return
     end
-    -- main-menu calistigini dogrula (hazir bayragi)
     local ready = waitFor(function()
       return S.MAIN_READY == true
     end, 6)
@@ -1177,8 +1131,7 @@ local function onRegister(name, nick, pass)
     return false, "Bu takma ad zaten alınmış."
   end
 
-  -- Mevcut icerik bilinmiyorsa UZERME YAPMA: aksi halde dosyadaki tum
-  -- hesaplar silinip sadece yeni satir kalir (veri kaybi).
+  -- Mevcut içerik bilinmiyorsa ÜZERİNE YAZMA (veri kaybı olmasın)
   if not info or type(info.content) ~= "string" then
     return false, "Oyuncu listesi okunamadi, kayit yapilmadi (mevcut veriler korundu)."
   end
@@ -1189,7 +1142,6 @@ local function onRegister(name, nick, pass)
 
   local sha = info and info.sha or nil
   if not sha then
-    -- sha bilgisi yoksa yeniden al
     local re = ghGetFile(FILE_PLAYER, TOKEN)
     if re then sha = re.sha end
   end
@@ -1199,7 +1151,6 @@ local function onRegister(name, nick, pass)
 
   local wrote, werr, wcode = ghPutFile(FILE_PLAYER, content, sha, TOKEN, "loadsystem: add player " .. nick)
   if not wrote and wcode == 409 then
-    -- sha cakismasi: dosya az once degismis olabilir -> yeniden oku ve tekrar dene
     local re = ghGetFile(FILE_PLAYER, TOKEN)
     if re then
       local content2 = appendLine(re.content, line)
@@ -1238,14 +1189,14 @@ local function main()
   end)
   print("[loadsystem] yukleme basladi")
 
-  -- 1) API anahtarini coz
+  -- 1) API anahtarını çöz
   TOKEN = decryptBlob(CIPHER.KEY, CIPHER.BLOB)
   if not TOKEN then
     boot.fail("API ANAHTARI COZULEMEDI", "Sifreleme katmani hata verdi. Dosya bozuk olabilir.")
     return
   end
 
-  -- 2) arayuzu indir
+  -- 2) arayüzü indir
   boot.setText("LOADING", "ARAYUZ INDIRILIYOR")
   print("[loadsystem] arayuz indiriliyor")
   local code, err = fetchRepoFile(FILE_GUI, TOKEN)
@@ -1254,7 +1205,7 @@ local function main()
     return
   end
 
-  -- 3) arayuzu calistir
+  -- 3) arayüzü çalıştır
   print("[loadsystem] arayuz calistiriliyor")
   S.__VERIFY_LOADING = true
   local GUI, lerr = loadChunk(code, FILE_GUI)
@@ -1264,7 +1215,6 @@ local function main()
     return
   end
   S.GUI = GUI
-  -- verify-gui tek basina calistirilip demo panel acmisse onu kapat
   if GUI.__standalone and GUI.__standalonePanel then
     pcall(function() GUI.__standalonePanel.close() end)
   end
@@ -1282,7 +1232,7 @@ local function main()
   end
   panel = panelOrErr
 
-  -- 5) siyah ekrani animasyonla kaldir
+  -- 5) siyah ekranı animasyonla kaldır
   print("[loadsystem] panel hazir, siyah ekran kaldiriliyor")
   sleep(0.45)
   pcall(function() GUI.dismissBoot() end)
@@ -1299,6 +1249,6 @@ if not okBoot then
 end
 
 return {
-  version = "1.1.1",
+  version = "1.1.2",
   session = function() return S.SESSION end,
 }
