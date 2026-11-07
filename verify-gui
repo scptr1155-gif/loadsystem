@@ -621,4 +621,28 @@ function M.dismissBoot()
   boot.bg = nil
 end
 
+--------------------------------------------------------------
+-- TEK BASINA CALISTIRILDI
+-- verify yerine bu dosya dogrudan loadstring ile calistirilirsa
+-- (backend olmadan) arayuzu test edebilmek icin demo panel acilir.
+--------------------------------------------------------------
+if not S.__VERIFY_LOADING then
+  local okName, plrName = pcall(function()
+    local p = Players and Players.LocalPlayer
+    if not p then return "Oyuncu" end
+    return p.DisplayName or p.Name or "Oyuncu"
+  end)
+  M.__standalone = true
+  M.__standalonePanel = M.build({
+    username = (okName and plrName) or "Oyuncu",
+    onLogin = function()
+      return false, "Test ekrani: veri sunucusu yok. Tam sistem icin verify komutunu calistir."
+    end,
+    onRegister = function()
+      return false, "Test ekrani: veri sunucusu yok. Tam sistem icin verify komutunu calistir."
+    end,
+  })
+  print("[verify-gui] tek basina calistirildi (demo panel)")
+end
+
 return M
