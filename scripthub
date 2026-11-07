@@ -1,510 +1,553 @@
--- scripthub | SCRIPT HUB — AYRI BÖLÜM (v2.0)
+-- scripthub | SENARYO MERKEZİ — AYRI BÖLÜM (v2.0)
 -- =========================================================
--- main-menu bu dosyayı indirir, ana menüyü kapatır ve open(ctx) çağırır.
--- Hub kendi ekranında açılır. GERİ tuşu ana menüyü yeniden yükler.
+-- ana menü bu şekilde indirilir, ana menüyü kapatır ve open(ctx) çağırır.
+-- Hub kendi kendine açılır. GERİ tuşu ana menüsü yeniden yüklenir.
 --
--- Veri deposu: scptr1155-gif/roblox-game-star  (herkese açık olmalı)
---   hub-index.json -> {"next":2,"scripts":[{id,name,author,desc,image,rating,uses,created}]}
---   000000001, 000000002 ... 999999999 -> her scriptin kodu (9 haneli ID, uzantısız dosya)
---   (main-file dosyasına dokunulmaz.)
+-- Veri deposu: scptr1155-gif/roblox-game-star (herkese açık olmalı)
+-- hub-index.json -> {"next":2,"scripts":[{id,name,author,desc,image,rating,uses,created}]}
+-- 000000001, 000000002 ... 999999999 -> her scriptin kodu (9 haneli ID, uzantısız dosya)
+-- (ana dosya dosyasına dokunulmaz.)
 --
--- Bu dosya sadece OKUR (API anahtarı gerekmez). Yayınlama `create a code` dosyasındadır.
+-- Bu dosya sadece OKUR (API anahtarı gerekmez). Yayınlama `kod oluştur` dosyasındadır.
 --
 -- ctx: { lang="tr"|"en", accent=Color3, bg=bool, anim=bool, nick, player, menuUrl }
 
-local G = (type(getgenv) == "function" and getgenv()) or _G
-local S = G.__LOADSYS or {}
+yerel G = (type(getgenv) == "function" ve getgenv()) veya _G
+yerel S = G.__LOADSYS veya {}
 G.__LOADSYS = S
 
-local BASE  = "https://raw.githubusercontent.com/scptr1155-gif/loadsystem/refs/heads/main/"
-local STORE = "https://raw.githubusercontent.com/scptr1155-gif/roblox-game-star/refs/heads/main/"
-local INDEX_FILE = "hub-index.json"
-local CREATE_URL = BASE .. "create%20a%20code"
-local MAX_ID = 999999999
+yerel BASE = "https://raw.githubusercontent.com/scptr1155-gif/loadsystem/refs/heads/main/"
+yerel MAĞAZA = "https://raw.githubusercontent.com/scptr1155-gif/roblox-game-star/refs/heads/main/"
+yerel INDEX_FILE = "hub-index.json"
+yerel CREATE_URL = BASE .. "create%20a%20code"
+yerel MAX_ID = 999999999
 
-local function getService(n)
-  local ok, s = pcall(function() return game:GetService(n) end)
-  if ok and s then return s end
-  return nil
-end
-local Players, TweenService, CoreGui = getService("Players"), getService("TweenService"), getService("CoreGui")
-local HttpService, Workspace = getService("HttpService"), getService("Workspace")
+yerel fonksiyon getService(n)
+  yerel tamam, s = pcall(function() return game:GetService(n) end)
+  Eğer "tamam" ve "s" ise "s" döndür.
+  boş döndür
+son
+yerel Oyuncular, TweenService, CoreGui = getService("Oyuncular"), getService("TweenService"), getService("CoreGui")
+yerel HttpService, Çalışma Alanı = getService("HttpService"), getService("Çalışma Alanı")
 
-local function sleep(s)
-  if type(task) == "table" and type(task.wait) == "function" then task.wait(s or 0)
+yerel fonksiyon uyku(lar)
+  Eğer `type(task)` "table" ve `type(task.wait)` "function" ise `task.wait(s veya 0)`
   elseif type(wait) == "function" then wait(s or 0) end
-end
-local function spawn(fn, ...)
-  if type(task) == "table" and type(task.spawn) == "function" then return task.spawn(fn, ...) end
-  local co = coroutine.create(fn)
-  coroutine.resume(co, ...)
-  return co
-end
-local function delay(t, fn)
-  if type(task) == "table" and type(task.delay) == "function" then return task.delay(t, fn) end
+son
+yerel fonksiyon spawn(fn, ...)
+  Eğer `type(task)` "table" ve `type(task.spawn)` "function" ise `task.spawn(fn, ...)` döndür.
+  yerel co = coroutine.create(fn)
+  eşişlem.devam et(eş, ...)
+  iade kodu
+son
+yerel fonksiyon gecikmesi(t, fn)
+  Eğer `type(task)` "table" ve `type(task.delay)` "function" ise `task.delay(t, fn)` değerini döndür.
   spawn(function() sleep(t) fn() end)
-end
-local function safe(fn, ...)
-  local ok, a = pcall(fn, ...)
-  return ok, a
-end
+son
+yerel fonksiyon güvenli(fn, ...)
+  yerel tamam, a = pcall(fn, ...)
+  Tamam, geri dönüş
+son
 
 --------------------------------------------------------------
 -- Diller
 --------------------------------------------------------------
-local STR = {
+yerel STR = {
   tr = {
-    back = "← GERİ", title = "Script Hub", create = "CREATE",
+    geri = "← GERİ", başlık = "Betik Merkezi", oluştur = "OLUŞTUR",
     t_new = "EN YENİ", t_top = "EN YÜKSEK PUAN", t_pop = "POPÜLER",
     id_ph = "ID (1-999999999)", go = "GİT", run = "ÇALIŞTIR",
-    empty = "Henüz script yok.", none_found = "Bu ID ile script bulunamadı.",
-    loading = "Yükleniyor...", by = "yazar", bad_id = "Geçerli bir ID gir (1-999999999).",
+    empty = "Henüz komut dosyası yok.", none_found = "Bu ID dosyası komut dosyası bulunamadı.",
+    yükleniyor = "Yükleniyor...", by = "yazar", bad_id = "Geçerli bir ID gir (1-999999999).",
     run_ok = "Script çalıştırıldı.", run_fail = "Çalıştırılamadı: ",
     ld_create = "OLUŞTURMA ARAÇLARI YÜKLENİYOR", ld_sub = "LÜTFEN BEKLE",
-    not_ready = "Sistem daha kurulmadı.", menu_fail = "Ana menü indirilemedi. Bağlantını kontrol et.",
+    not_ready = "Sistem daha kurulmadı.", menu_fail = "Ana menü indirilmedi. Bağlantısını kontrol et.",
     nodesc = "Açıklama yok",
   },
   en = {
-    back = "← BACK", title = "Script Hub", create = "CREATE",
-    t_new = "NEWEST", t_top = "TOP RATED", t_pop = "POPULAR",
-    id_ph = "ID (1-999999999)", go = "GO", run = "RUN",
-    empty = "No scripts yet.", none_found = "No script found with that ID.",
-    loading = "Loading...", by = "by", bad_id = "Enter a valid ID (1-999999999).",
-    run_ok = "Script executed.", run_fail = "Could not run: ",
-    ld_create = "LOADING CREATE TOOLS", ld_sub = "PLEASE WAIT",
-    not_ready = "The system is not set up yet.", menu_fail = "Could not download the main menu. Check your connection.",
-    nodesc = "No description",
+    geri = "← GERİ", başlık = "Komut Dosyası Merkezi", oluştur = "OLUŞTUR",
+    t_new = "EN YENİ", t_top = "EN ÇOK BEĞENİLEN", t_pop = "POPÜLER",
+    id_ph = "Kimlik (1-999999999)", go = "GİT", run = "ÇALIŞTIR",
+    boş = "Henüz hiçbir komut dosyası yok.", bulunamayan = "Bu kimlikle hiçbir komut dosyası bulunamadı.",
+    loading = "Yükleniyor...", by = "by", bad_id = "Geçerli bir kimlik girin (1-999999999).",
+    run_ok = "Komut dosyası yürütüldü.", run_fail = "Çalıştırılamadı: ",
+    ld_create = "YARATMA ARAÇLARI YÜKLENİYOR", ld_sub = "LÜTFEN BEKLEYİN",
+    not_ready = "Sistem henüz kurulmadı.", menu_fail = "Ana menü indirilemedi. Bağlantınızı kontrol edin.",
+    nodesc = "Açıklama yok",
   },
 }
 
 --------------------------------------------------------------
--- Veri katmanı (okuma)
+-- Veri (okuma)
 --------------------------------------------------------------
-local function pad(id) return string.format("%09d", id) end
+yerel fonksiyon pad(id) return string.format("%09d", id) end
 
-local function httpGet(url)
-  local sep = url:find("?", 1, true) and "&" or "?"
-  local ok, r = pcall(function() return game:HttpGet(url .. sep .. "t=" .. tostring(os.time())) end)
-  if ok and type(r) == "string" and #r > 0 and r:sub(1, 14) ~= "404: Not Found" then return r end
-  return nil
-end
+yerel fonksiyon httpGet(url)
+  yerel sep = url:find("?", 1, true) ve "&" veya "?"
+  yerel tamam, r = pcall(function() return game:HttpGet(url .. sep .. "t=" .. tostring(os.time())) end)
+  Eğer her şey yolundaysa ve type(r) == "string" ise ve #r > 0 ise ve r:sub(1, 14) ~= "404: Not Found" ise, r'yi döndür.
+  boş döndür
+son
 
-local function readIndex()
-  local src = httpGet(STORE .. INDEX_FILE)
-  if not src then return { next = 1, scripts = {} } end
-  local ok, d = pcall(function() return HttpService:JSONDecode(src) end)
-  if ok and type(d) == "table" and type(d.scripts) == "table" then return d end
+yerel fonksiyon readIndex()
+  yerel kaynak = httpGet(DOSYA .. DİZİN_DOSYA)
+  Eğer kaynak mevcut değilse, { next = 1, scripts = {} } döndür.
+  yerel tamam, d = pcall(function() return HttpService:JSONDecode(src) end)
+  Eğer sorun yoksa ve type(d) == "table" ve type(d.scripts) == "table" ise, d'yi döndür.
   return { next = 1, scripts = {} }
-end
+son
 
-local function num(v) return tonumber(v) or 0 end
+yerel fonksiyon num(v) tonumber(v) veya 0 döndür son
 
-local function listScripts(sort)
-  local items = {}
+yerel fonksiyon listScripts(sıralama)
+  yerel öğeler = {}
   for _, e in ipairs(readIndex().scripts) do items[#items + 1] = e end
-  if sort == "top" then
-    table.sort(items, function(a, b)
-      if num(a.rating) ~= num(b.rating) then return num(a.rating) > num(b.rating) end
+  eğer sıralama "en üst" ise o zaman
+    tablo.sırala(öğeler, fonksiyon(a, b))
+      Eğer num(a.rating) ~= num(b.rating) ise, num(a.rating) > num(b.rating) değerini döndür.
       return num(a.id) > num(b.id)
-    end)
-  elseif sort == "popular" then
-    table.sort(items, function(a, b)
-      if num(a.uses) ~= num(b.uses) then return num(a.uses) > num(b.uses) end
+    son)
+  aksi takdirde eğer sıralama "popüler" ise o zaman
+    tablo.sırala(öğeler, fonksiyon(a, b))
+      Eğer num(a.uses) ~= num(b.uses) ise, num(a.uses) > num(b.uses) değerini döndür.
       return num(a.id) > num(b.id)
-    end)
-  else
-    table.sort(items, function(a, b) return num(a.id) > num(b.id) end)
-  end
-  return items
-end
+    son)
+  başka
+    tablo.sırala(öğeler, fonksiyon(a, b) return num(a.id) > num(b.id) end)
+  son
+  iade ürünleri
+son
 
-local function findScript(id)
+yerel fonksiyon findScript(id)
   for _, e in ipairs(readIndex().scripts) do
     if num(e.id) == id then return e end
-  end
-  return nil
-end
+  son
+  boş döndür
+son
 
-local function runScript(id)
-  local code = httpGet(STORE .. pad(id))
-  if not code then error("kod indirilemedi") end
-  local fn, err = loadstring(code)
-  if not fn then error(err) end
+yerel fonksiyon runScript(id)
+  yerel kod = httpGet(STORE .. pad(id))
+  eğer kod değilse hata ver ("kod indirilemedi") son
+  yerel fonksiyon, hata = kod dizesini yükle
+  eğer fn değilse hata (err) son
   fn()
-end
+son
 
--- Uzak dosyayı indir + çalıştır (boş/hata = başarısız)
-local function fetchLoad(url)
-  local src = httpGet(url)
-  if not src then return false, "indirilemedi" end
+-- Uzaktaki indir + çalıştır (boş/hata = başarısız)
+yerel fonksiyon fetchLoad(url)
+  yerel kaynak = httpGet(url)
+  Eğer kaynak kod değilse false döndür, "indirilemedi" son
   if #((src:gsub("%s+", ""))) == 0 then return false, "bos dosya" end
   if type(loadstring) ~= "function" then return false, "loadstring yok" end
-  local fn, cerr = loadstring(src)
-  if not fn then return false, tostring(cerr) end
-  local okR, mod = pcall(fn)
-  if not okR then return false, tostring(mod) end
-  return true, mod
-end
+  yerel fonksiyon, cerr = loadstring(src)
+  Eğer fn değilse false döndür, tostring(cerr) son
+  yerel okR, mod = pcall(fn)
+  Eğer okR değilse false döndür, tostring(mod) son
+  true döndür, mod
+son
 
 --------------------------------------------------------------
--- Arayüz
+--
 --------------------------------------------------------------
-local C = {
+yerel C = {
   bg = Color3.fromRGB(9, 10, 14), bgTop = Color3.fromRGB(19, 21, 31),
-  panel = Color3.fromRGB(13, 15, 20), card = Color3.fromRGB(22, 25, 33),
+  panel = Color3.fromRGB(13, 15, 20), kart = Color3.fromRGB(22, 25, 33),
   cardHi = Color3.fromRGB(31, 35, 46), line = Color3.fromRGB(38, 42, 53),
-  text = Color3.fromRGB(240, 242, 247), muted = Color3.fromRGB(144, 149, 165),
-  faint = Color3.fromRGB(98, 103, 120), ok = Color3.fromRGB(34, 197, 94),
-  danger = Color3.fromRGB(239, 68, 68), white = Color3.fromRGB(255, 255, 255),
+  metin = Color3.fromRGB(240, 242, 247), soluk = Color3.fromRGB(144, 149, 165),
+  soluk = Color3.fromRGB(98, 103, 120), iyi = Color3.fromRGB(34, 197, 94),
+  tehlike = Color3.fromRGB(239, 68, 68), beyaz = Color3.fromRGB(255, 255, 255),
 }
-local FNT = { reg = Enum.Font.Gotham, med = Enum.Font.GothamMedium, bold = Enum.Font.GothamBold }
-local AL, AC = Enum.TextXAlignment.Left, Enum.TextXAlignment.Center
+yerel FNT = { reg = Enum.Font.Gotham, med = Enum.Font.GothamMedium, bold = Enum.Font.GothamBold }
+yerel AL, AC = Enum.TextXAlignment.Left, Enum.TextXAlignment.Center
 
-local function new(class, props, parent)
-  local ok, o = pcall(function() return Instance.new(class) end)
-  if not ok or not o then return nil end
-  if props then for k, v in pairs(props) do safe(function() o[k] = v end) end end
+yerel fonksiyon new(sınıf, özellikler, üst sınıf)
+  yerel tamam, o = pcall(function() return Instance.new(class) end)
+  Eğer "tamam" veya "o" değilse, nil döndür.
+  Eğer props varsa, k ve v çiftleri için (props'tan) güvenli bir şekilde o[k] = v fonksiyonunu çalıştır.
   if parent then safe(function() o.Parent = parent end) end
-  return o
-end
-local function round(o, r) if o then new("UICorner", { CornerRadius = UDim.new(0, r or 12) }, o) end end
-local function stroke(o, col) if o then new("UIStroke", { ApplyStrokeMode = Enum.ApplyStrokeMode.Border, Color = col, Thickness = 1 }, o) end end
+  dönüş o
+son
+Yerel fonksiyon round(o, r) eğer o ise new("UICorner", { CornerRadius = UDim.new(0, r veya 12) }, o) end end
+yerel fonksiyon stroke(o, col) eğer o ise new("UIStroke", { ApplyStrokeMode = Enum.ApplyStrokeMode.Border, Color = col, Thickness = 1 }, o) end end
 
-local M = {}
+yerel M = {}
 
-function M.open(ctx)
-  ctx = ctx or {}
-  local lang = (ctx.lang == "en") and "en" or "tr"
-  local function T(k) return STR[lang][k] or STR.tr[k] or k end
-  local accent = ctx.accent or Color3.fromRGB(88, 101, 242)
-  local accentHi = accent:Lerp(Color3.new(1, 1, 1), 0.18)
-  local animOn = ctx.anim ~= false
+fonksiyon M.open(ctx)
+  ctx = ctx veya {}
+  local lang = (ctx.lang == "en") ve "en" veya "tr"
+  yerel fonksiyon T(k) STR[lang][k] veya STR.tr[k] veya k döndürür son
+  yerel vurgu = ctx.accent veya Color3.fromRGB(88, 101, 242)
+  yerel accentHi = accent:Lerp(Color3.new(1, 1, 1), 0.18)
+  yerel animasyonOn = ctx.anim ~= false
 
   -- önceki hub açıksa kapat
-  safe(function() if S.HUB_GUI then S.HUB_GUI:Destroy() end end)
+  güvenli(fonksiyon() eğer S.HUB_GUI ise S.HUB_GUI:Destroy() son son)
 
-  local gui = new("ScreenGui", {
-    Name = "LoadSystemHub", ResetOnSpawn = false, IgnoreGuiInset = true, DisplayOrder = 800,
+  yerel gui = new("ScreenGui", {
+    İsim = "LoadSystemHub", ResetOnSpawn = false, IgnoreGuiInset = true, DisplayOrder = 800,
     ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
   })
-  if not gui then return end
-  local attached = false
-  if CoreGui then attached = pcall(function() gui.Parent = CoreGui end) and gui.Parent == CoreGui end
-  if not attached then
+  Eğer GUI değilse, geri dön ve bitir.
+  yerel bağlı = yanlış
+  Eğer CoreGui varsa, attached = pcall(function() gui.Parent = CoreGui end) ve gui.Parent == CoreGui end
+  bağlı değilse
     pcall(function() gui.Parent = Players.LocalPlayer:WaitForChild("PlayerGui") end)
-  end
+  son
   S.HUB_GUI = gui
 
-  local alive, closing = true, false
-  local function tw(obj, goal, t)
-    if not obj then return end
-    if animOn and TweenService then
-      local ok = pcall(function()
-        TweenService:Create(obj, TweenInfo.new(t or 0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), goal):Play()
-      end)
-      if ok then return end
-    end
+  yerel canlı, kapanıyor = doğru, yanlış
+  yerel fonksiyon tw(obj, hedef, t)
+    Eğer nesne değilse, sonu döndür.
+    eğer animOn ve TweenService mevcutsa
+      yerel ok = pcall(fonksiyon()
+        TweenService:Create(obj, TweenInfo.new(t veya 0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), goal):Play()
+      son)
+      Eğer uygunsa, geri dön.
+    son
     for k, v in pairs(goal) do safe(function() obj[k] = v end) end
-  end
-  local function label(parent, text, x, y, w, h, size, font, color, align, extra)
-    local p = {
-      Size = UDim2.fromOffset(w, h), Position = UDim2.fromOffset(x, y), BackgroundTransparency = 1,
-      Text = text, TextColor3 = color, TextSize = size, Font = font, TextXAlignment = align or AL, ZIndex = 4,
+  son
+  yerel fonksiyon label(parent, text, x, y, w, h, size, font, color, align, extra)
+    yerel p = {
+      Boyut = UDim2.fromOffset(w, h), Konum = UDim2.fromOffset(x, y), Arka Plan Şeffaflığı = 1,
+      Text = metin, TextColor3 = renk, TextSize = boyut, Font = yazı tipi, TextXAlignment = hizala veya AL, ZIndex = 4,
     }
-    if extra then for k, v in pairs(extra) do p[k] = v end end
+    Eğer ekstra ise, k ve v çiftleri için p[k] = v yap.
     return new("TextLabel", p, parent)
-  end
+  son
 
   -- arka plan: şeffaf = oyun ekranı
-  local bg = new("Frame", {
-    Size = UDim2.fromScale(1, 1), BackgroundColor3 = C.bg, BackgroundTransparency = (ctx.bg == false) and 0 or 1,
+  yerel bg = new("Çerçeve", {
+    Boyut = UDim2.fromScale(1, 1), Arka PlanRengi3 = C.bg, Arka PlanŞeffaflığı = (ctx.bg == false) ve 0 veya 1,
     BorderSizePixel = 0, ZIndex = 0,
   }, gui)
   new("UIGradient", { Color = ColorSequence.new(C.bgTop, C.bg), Rotation = 150 }, bg)
 
-  local WIN_W, WIN_H, PAD = 880, 520, 28
-  local IW = WIN_W - PAD * 2
-  local window = new("Frame", {
-    Size = UDim2.fromOffset(WIN_W, WIN_H), AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5),
+  yerel WIN_W, WIN_H, PAD = 880, 520, 28
+  yerel IW = WIN_W - PAD * 2
+  yerel pencere = yeni("Çerçeve", {
+    Boyut = UDim2.fromOffset(WIN_W, WIN_H), Çapa Noktası = Vector2.new(0.5, 0.5), Konum = UDim2.fromScale(0.5, 0.5),
     BackgroundColor3 = C.panel, BorderSizePixel = 0, ZIndex = 2,
   }, bg)
-  round(window, 18)
-  stroke(window, C.line)
-  local uiScale = new("UIScale", { Scale = 1 }, window)
-  local function fit()
-    local vp = Vector2.new(1280, 720)
-    safe(function() local cam = Workspace.CurrentCamera if cam then vp = cam.ViewportSize end end)
-    local s = math.min((vp.X - 24) / WIN_W, (vp.Y - 24) / WIN_H, 1)
-    if s <= 0 then s = 1 end
-    safe(function() uiScale.Scale = math.max(0.35, s) end)
-  end
-  fit()
-  local camConn
-  safe(function()
+  yuvarlak(pencere, 18)
+  çizgi(pencere, C.çizgi)
+  yerel uiScale = new("UIScale", { Scale = 1 }, window)
+  yerel fonksiyon fit()
+    yerel vp = Vector2.new(1280, 720)
+    güvenli(fonksiyon() yerel kamera = Çalışma Alanı.MevcutKamera eğer kamera ise vp = kamera.GörüntüAçılışıBölgeBoyutu end end)
+    yerel s = math.min((vp.X - 24) / WIN_W, (vp.Y - 24) / WIN_H, 1)
+    Eğer s <= 0 ise s = 1'dir.
+    güvenli(function() uiScale.Scale = math.max(0.35, s) end)
+  son
+  yerleştirmek()
+  yerel camConn
+  güvenli(fonksiyon()
     camConn = Workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(fit)
-  end)
+  son)
 
-  local function close()
-    alive = false
-    safe(function() if camConn then camConn:Disconnect() end end)
-    safe(function() gui:Destroy() end)
-    if S.HUB_GUI == gui then S.HUB_GUI = nil end
-  end
+  yerel fonksiyon kapat()
+    canlı = yanlış
+    güvenli(fonksiyon() eğer kamera bağlantısı varsa kamera bağlantısını kes() son son)
+    güvenli(fonksiyon() gui:Yoket() son)
+    Eğer S.HUB_GUI == gui ise S.HUB_GUI = nil olur.
+  son
 
-  -- Bildirim
-  local toastF = new("Frame", {
-    Size = UDim2.fromOffset(470, 42), AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, 70),
+  --
+  yerel toastF = new("Çerçeve", {
+    Boyut = UDim2.fromOffset(470, 42), Çapa Noktası = Vector2.new(0.5, 1), Konum = UDim2.new(0.5, 0, 1, 70),
     BackgroundColor3 = C.cardHi, BorderSizePixel = 0, Visible = false, ZIndex = 60,
-  }, window)
-  round(toastF, 21)
-  stroke(toastF, C.line)
-  local toastDot = new("Frame", {
-    Size = UDim2.fromOffset(8, 8), Position = UDim2.fromOffset(18, 17), BackgroundColor3 = C.muted, BorderSizePixel = 0, ZIndex = 61,
+  }, pencere)
+  yuvarlak(toastF, 21)
+  vuruş(toastF, C.line)
+  yerel toastDot = new("Çerçeve", {
+    Boyut = UDim2.fromOffset(8, 8), Konum = UDim2.fromOffset(18, 17), Arka Plan Rengi3 = C.muted, Kenar Boyutu Pikseli = 0, Z İndeksi = 61,
   }, toastF)
-  round(toastDot, 4)
-  local toastT = label(toastF, "", 36, 0, 422, 42, 12, FNT.med, C.text, AL, { ZIndex = 61, TextTruncate = Enum.TextTruncate.AtEnd })
-  local toastTok = 0
-  local function toast(text, color)
+  yuvarlak(toastDot, 4)
+  yerel toastT = label(toastF, "", 36, 0, 422, 42, 12, FNT.med, C.text, AL, { ZIndex = 61, TextTruncate = Enum.TextTruncate.AtEnd })
+  yerel toastTok = 0
+  yerel fonksiyon toast(metin, renk)
     toastTok = toastTok + 1
-    local my = toastTok
-    safe(function()
-      toastT.Text = tostring(text or "")
-      toastDot.BackgroundColor3 = color or C.muted
+    yerel benim = toastTok
+    güvenli(fonksiyon()
+      toastT.Text = tostring(text veya "")
+      toastDot.BackgroundColor3 = renk veya C.muted
       toastF.Visible = true
-    end)
+    son)
     tw(toastF, { Position = UDim2.new(0.5, 0, 1, -18) }, 0.3)
-    delay(3.5, function()
+    gecikme(3.5, fonksiyon()
       if my ~= toastTok or not alive then return end
       tw(toastF, { Position = UDim2.new(0.5, 0, 1, 70) }, 0.3)
-    end)
-  end
+    son)
+  son
 
   -- Header: GERİ / başlık / CREATE
-  local function pill(text, x, y, w, h, filled)
-    local b = new("TextButton", {
-      Size = UDim2.fromOffset(w, h), Position = UDim2.fromOffset(x, y),
-      BackgroundColor3 = filled and accent or C.card, BorderSizePixel = 0, Text = text,
-      TextColor3 = filled and C.white or C.text, TextSize = 12, Font = FNT.bold, AutoButtonColor = false, ZIndex = 4,
-    }, window)
-    round(b, 10)
-    if not filled then stroke(b, C.line) end
+  yerel fonksiyon pill(metin, x, y, w, h, doldurulmuş)
+    yerel b = new("MetinDüğmesi", {
+      Boyut = UDim2.fromOffset(w, h), Konum = UDim2.fromOffset(x, y),
+      BackgroundColor3 = dolgulu ve vurgulu veya C.card, BorderSizePixel = 0, Text = metin,
+      TextColor3 = filled ve C.white veya C.text, TextSize = 12, Font = FNT.bold, AutoButtonColor = false, ZIndex = 4,
+    }, pencere)
+    yuvarla(b, 10)
+    doldurulmamışsa, (b, C.line) çizgisini çiz.
     b.MouseEnter:Connect(function() tw(b, { BackgroundColor3 = filled and accentHi or C.cardHi }, 0.12) end)
     b.MouseLeave:Connect(function() tw(b, { BackgroundColor3 = filled and accent or C.card }, 0.12) end)
-    return b
-  end
-  local backBtn = pill(T("back"), PAD, 24, 110, 38, false)
-  label(window, T("title"), PAD + 126, 22, 300, 42, 24, FNT.bold, C.text)
-  local createBtn = pill(T("create"), WIN_W - PAD - 150, 24, 150, 38, true)
+    b'yi döndür
+  son
+  yerel backBtn = pill(T("back"), PAD, 24, 110, 38, false)
+  etiket(pencere, T("başlık"), PAD + 126, 22, 300, 42, 24, FNT.kalın, C.metin)
+  yerel xBtn = pill("X", WIN_W - PAD - 34, 24, 34, 38, false)
+  yerel createBtn = pill(T("create"), WIN_W - PAD - 34 - 10 - 130, 24, 130, 38, true)
 
   -- Sekmeler + ID arama
-  local sort = "new"
-  local TABS = { { "new", "t_new" }, { "top", "t_top" }, { "popular", "t_pop" } }
-  local tabBtns = {}
-  local function refreshTabs()
-    for i, b in ipairs(tabBtns) do
-      local on = (TABS[i][1] == sort)
-      tw(b, { BackgroundColor3 = on and accent or C.card, TextColor3 = on and C.white or C.muted }, 0.2)
-    end
-  end
+  yerel sıralama = "yeni"
+  yerel SEKMELER = { { "yeni", "t_yeni" }, { "en iyi", "t_en iyi" }, { "popüler", "t_popüler" } }
+  yerel sekme düğmeleri = {}
+  yerel fonksiyon refreshTabs()
+    i, b için ipairs(tabBtns) içinde
+      yerel olarak = (TABS[i][1] == sıralama)
+      tw(b, { BackgroundColor3 = on ve accent veya C.card, TextColor3 = on ve C.white veya C.muted }, 0.2)
+    son
+  son
 
-  local scroll = new("ScrollingFrame", {
-    Size = UDim2.fromOffset(IW, 364), Position = UDim2.fromOffset(PAD, 128), BackgroundTransparency = 1, BorderSizePixel = 0,
-    ScrollBarThickness = 3, CanvasSize = UDim2.fromOffset(0, 0), AutomaticCanvasSize = Enum.AutomaticSize.Y, ZIndex = 3,
-  }, window)
+  yerel kaydırma çubuğu = yeni("Kaydırma Çerçevesi", {
+    Boyut = UDim2.fromOffset(IW, 364), Konum = UDim2.fromOffset(PAD, 128), Arka Plan Şeffaflığı = 1, Kenar Boyutu Piksel = 0,
+    Kaydırma Çubuğu Kalınlığı = 3, Tuval Boyutu = UDim2.fromOffset(0, 0), Otomatik Tuval Boyutu = Enum.AutomaticSize.Y, Z İndeksi = 3,
+  }, pencere)
   new("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder }, scroll)
 
-  local function clearList()
+  yerel fonksiyon clearList()
     for _, c in ipairs(scroll:GetChildren()) do
       if c.Name == "Card" or c.Name == "Msg" then safe(function() c:Destroy() end) end
-    end
-  end
-  local function showMsg(text)
-    clearList()
-    label(scroll, text, 0, 0, IW, 80, 13, FNT.med, C.faint, AC, { Name = "Msg", TextWrapped = true })
-  end
+    son
+  son
+  yerel fonksiyon showMsg(metin)
+    listeyi temizle()
+    etiket(kaydır, metin, 0, 0, IW, 80, 13, FNT.med, C.faint, AC, { Ad = "Mesaj", Metin Kaydırma = true })
+  son
 
-  local function runEntry(e)
-    spawn(function()
-      local ok, err = pcall(runScript, math.floor(num(e.id)))
-      if not alive then return end
-      if ok then toast(T("run_ok"), C.ok) else toast(T("run_fail") .. tostring(err), C.danger) end
-    end)
-  end
+  yerel fonksiyon runEntry(e)
+    spawn(fonksiyon()
+      yerel ok, err = pcall(runScript, math.floor(num(e.id)))
+      Eğer hayatta değilse, geri dön.
+      Eğer sorun yoksa, "run_ok" yazıp "tf" ile bildirim gönder, aksi takdirde "run_fail" yazıp "tf" ile "err" arasına "danger" yazıp bildirim gönder.
+    son)
+  son
 
-  local function render(list)
-    clearList()
-    if #list == 0 then showMsg(T("empty")) return end
-    for i, e in ipairs(list) do
-      if i > 100 then break end
-      local card = new("Frame", {
-        Name = "Card", Size = UDim2.fromOffset(IW - 8, 72), BackgroundColor3 = C.card, BorderSizePixel = 0,
-        LayoutOrder = i, ZIndex = 3,
-      }, scroll)
-      round(card, 12)
-      stroke(card, C.line)
-      local thumb = new("ImageLabel", {
-        Size = UDim2.fromOffset(52, 52), Position = UDim2.fromOffset(10, 10), BackgroundColor3 = C.cardHi,
+  yerel fonksiyon render(liste)
+    listeyi temizle()
+    Eğer #liste == 0 ise, "boş" mesajını göster ve geri dön.
+    ipairs(liste) içindeki i ve e için
+      Eğer i > 100 ise döngüyü sonlandır.
+      yerel kart = yeni("Çerçeve", {
+        Ad = "Kart", Boyut = UDim2.fromOffset(IW - 8, 72), Arka Plan Rengi3 = C.card, Kenar Boyutu Pikseli = 0,
+        YerleşimSırası = i, ZIndex = 3,
+      }, taslak)
+      tur(kart, 12)
+      vuruş(kart, C.çizgisi)
+      yerel thumb = new("ImageLabel", {
+        Boyut = UDim2.fromOffset(52, 52), Konum = UDim2.fromOffset(10, 10), Arka Plan Rengi3 = C.cardHi,
         BorderSizePixel = 0, ScaleType = Enum.ScaleType.Crop, ZIndex = 4,
-      }, card)
-      round(thumb, 10)
-      local img = tonumber(e.image)
-      if img and img > 0 then safe(function() thumb.Image = "rbxassetid://" .. tostring(math.floor(img)) end) end
-      label(card, tostring(e.name or "?"), 74, 9, IW - 230, 20, 14, FNT.bold, C.text, AL, { TextTruncate = Enum.TextTruncate.AtEnd })
-      local r = tonumber(e.rating)
-      local meta = T("by") .. " " .. tostring(e.author or "?") .. "   ID " .. pad(math.floor(num(e.id)))
-        .. (r and ("   ★ " .. string.format("%.1f", r)) or "")
-      label(card, meta, 74, 30, IW - 230, 16, 11, FNT.med, C.muted, AL, { TextTruncate = Enum.TextTruncate.AtEnd })
-      local d = tostring(e.desc or "")
-      if d == "" then d = T("nodesc") end
-      label(card, d, 74, 47, IW - 230, 16, 11, FNT.reg, C.faint, AL, { TextTruncate = Enum.TextTruncate.AtEnd })
-      local rb = new("TextButton", {
-        Size = UDim2.fromOffset(100, 34), Position = UDim2.fromOffset(IW - 8 - 112, 19), BackgroundColor3 = accent,
+      }, kart)
+      yuvarlak(başparmak, 10)
+      yerel img = tonumber(e.image)
+      Eğer img ve img > 0 ise, safe(function() thumb.Image = "rbxassetid://" .. tostring(math.floor(img)) end) end
+      etiket(kart, tostring(e.name veya "?"), 74, 9, IW - 230, 20, 14, FNT.bold, C.text, AL, { TextTruncate = Enum.TextTruncate.AtEnd })
+      yerel r = tonumber(e.rating)
+      yerel meta = T("by") .. " " .. tostring(e.author or "?") .. " ID " .. pad(math.floor(num(e.id)))
+        .. (r ve (" ★ " .. string.format("%.1f", r)) veya "")
+      etiket(kart, meta, 74, 30, IW - 230, 16, 11, FNT.med, C.muted, AL, { TextTruncate = Enum.TextTruncate.AtEnd })
+      yerel d = tostring(e.desc veya "")
+      eğer d == "" ise d = T("nodesc") son
+      etiket(kart, d, 74, 47, IW - 230, 16, 11, FNT.reg, C.faint, AL, { TextTruncate = Enum.TextTruncate.AtEnd })
+      yerel rb = new("TextButton", {
+        Boyut = UDim2.fromOffset(100, 34), Konum = UDim2.fromOffset(IW - 8 - 112, 19), Arka Plan Rengi3 = vurgu,
         BorderSizePixel = 0, Text = T("run"), TextColor3 = C.white, TextSize = 11, Font = FNT.bold, AutoButtonColor = false, ZIndex = 4,
-      }, card)
-      round(rb, 9)
+      }, kart)
+      yuvarlak(rb, 9)
       rb.MouseButton1Click:Connect(function() runEntry(e) end)
-    end
-  end
+    son
+  son
 
-  local reqToken = 0
-  local function refresh()
+  yerel reqToken = 0
+  yerel fonksiyon yenileme()
     reqToken = reqToken + 1
-    local my, s = reqToken, sort
-    showMsg(T("loading"))
-    spawn(function()
-      local ok, res = pcall(listScripts, s)
-      if not alive or my ~= reqToken then return end
-      if ok then render(res) else showMsg(T("empty")) end
-    end)
-  end
+    yerel benim, s = reqToken, sırala
+    showMsg(T("yükleniyor"))
+    spawn(fonksiyon()
+      yerel tamam, res = pcall(listScripts, s)
+      Eğer hayatta değilse veya benim değerim reqToken'a eşit değilse, işlemi sonlandır.
+      Eğer uygunsa render(res) göster, aksi takdirde showMsg(T("empty")) göster.
+    son)
+  son
 
-  for i, t in ipairs(TABS) do
-    local b = new("TextButton", {
-      Size = UDim2.fromOffset(150, 32), Position = UDim2.fromOffset(PAD + (i - 1) * 158, 82), BackgroundColor3 = C.card,
+  i, t için ipairs(TABS) içinde
+    yerel b = new("MetinDüğmesi", {
+      Boyut = UDim2.fromOffset(150, 32), Konum = UDim2.fromOffset(PAD + (i - 1) * 158, 82), Arka Plan Rengi3 = C.card,
       BorderSizePixel = 0, Text = T(t[2]), TextColor3 = C.muted, TextSize = 11, Font = FNT.bold, AutoButtonColor = false, ZIndex = 4,
-    }, window)
-    round(b, 9)
-    stroke(b, C.line)
+    }, pencere)
+    yuvarlak(b, 9)
+    vuruş(b, C.çizgisi)
     tabBtns[i] = b
     b.MouseButton1Click:Connect(function()
-      sort = t[1]
-      refreshTabs()
-      refresh()
-    end)
-  end
+      sıralama = t[1]
+      Sekmeleri yenile()
+      yenile()
+    son)
+  son
 
-  local idF = new("Frame", {
-    Size = UDim2.fromOffset(170, 32), Position = UDim2.fromOffset(WIN_W - PAD - 250, 82), BackgroundColor3 = C.card,
+  yerel idF = new("Çerçeve", {
+    Boyut = UDim2.fromOffset(170, 32), Konum = UDim2.fromOffset(WIN_W - PAD - 250, 82), Arka Plan Rengi3 = C.card,
     BorderSizePixel = 0, ZIndex = 3,
-  }, window)
-  round(idF, 9)
-  stroke(idF, C.line)
-  local idBox = new("TextBox", {
-    Size = UDim2.new(1, -20, 1, 0), Position = UDim2.fromOffset(10, 0), BackgroundTransparency = 1, Text = "",
-    PlaceholderText = T("id_ph"), PlaceholderColor3 = C.faint, TextColor3 = C.text, TextSize = 12, Font = FNT.med,
+  }, pencere)
+  yuvarla(idF, 9)
+  vuruş(idF, C.line)
+  yerel idBox = new("TextBox", {
+    Boyut = UDim2.new(1, -20, 1, 0), Konum = UDim2.fromOffset(10, 0), Arka Plan Şeffaflığı = 1, Metin = "",
+    Yer tutucuMetin = T("id_ph"), Yer tutucuRenk3 = C.faint, MetinRenk3 = C.text, MetinBoyutu = 12, Yazı Tipi = FNT.med,
     ClearTextOnFocus = false, TextXAlignment = AL, ZIndex = 4,
   }, idF)
-  local goBtn = new("TextButton", {
-    Size = UDim2.fromOffset(72, 32), Position = UDim2.fromOffset(WIN_W - PAD - 72, 82), BackgroundColor3 = C.cardHi,
+  yerel goBtn = new("TextButton", {
+    Boyut = UDim2.fromOffset(72, 32), Konum = UDim2.fromOffset(WIN_W - PAD - 72, 82), Arka Plan Rengi3 = C.cardHi,
     BorderSizePixel = 0, Text = T("go"), TextColor3 = C.text, TextSize = 11, Font = FNT.bold, AutoButtonColor = false, ZIndex = 4,
-  }, window)
+  }, pencere)
   round(goBtn, 9)
 
-  local function searchId()
-    local txt = (idBox.Text or ""):match("^%s*(.-)%s*$")
-    local id = tonumber(txt)
-    if not id or id < 1 or id > MAX_ID or id ~= math.floor(id) then toast(T("bad_id"), C.danger) return end
-    showMsg(T("loading"))
-    spawn(function()
-      local ok, e = pcall(findScript, id)
-      if not alive then return end
-      if ok and e then render({ e }) else showMsg(T("none_found")) end
-    end)
-  end
+  yerel fonksiyon searchId()
+    yerel txt = (idBox.Text veya ""):match("^%s*(.-)%s*$")
+    yerel kimlik = tonumber(txt)
+    Eğer id boş değilse veya id < 1 ise veya id > MAX_ID ise veya id ~= math.floor(id) ise, "bad_id" (kötü_id) mesajını C.danger ile gösterin ve işlemi sonlandırın.
+    showMsg(T("yükleniyor"))
+    spawn(fonksiyon()
+      yerel tamam, e = pcall(findScript, id)
+      Eğer hayatta değilse, geri dön.
+      Eğer "t" ve "e" ise render({ e }) aksi halde showMsg(T("none_found")) end
+    son)
+  son
   goBtn.MouseButton1Click:Connect(searchId)
   idBox.FocusLost:Connect(function(enter) if enter then searchId() end end)
 
-  -- Loading ekranı (tam ekran)
-  local loadOv = new("Frame", {
-    Size = UDim2.fromScale(1, 1), BackgroundColor3 = Color3.fromRGB(0, 0, 0), BorderSizePixel = 0,
-    Visible = false, Active = true, ZIndex = 200,
+  -- Ekran yükleniyor (tam ekran)
+  yerel loadOv = new("Çerçeve", {
+    Boyut = UDim2.fromScale(1, 1), Arka PlanRengi3 = Color3.fromRGB(0, 0, 0), KenarBoyutuPiksel = 0,
+    Görünür = false, Aktif = true, ZIndex = 200,
   }, gui)
-  new("TextLabel", {
-    Size = UDim2.fromOffset(900, 56), Position = UDim2.fromScale(0.5, 0.45), AnchorPoint = Vector2.new(0.5, 0.5),
+  yeni("Metin Etiketi", {
+    Boyut = UDim2.fromOffset(900, 56), Konum = UDim2.fromScale(0.5, 0.45), Çapa Noktası = Vector2.new(0.5, 0.5),
     BackgroundTransparency = 1, Text = T("ld_create"), TextColor3 = C.white, TextSize = 32, Font = FNT.bold, ZIndex = 201,
   }, loadOv)
-  new("TextLabel", {
-    Size = UDim2.fromOffset(900, 24), Position = UDim2.fromScale(0.5, 0.52), AnchorPoint = Vector2.new(0.5, 0.5),
+  yeni("Metin Etiketi", {
+    Boyut = UDim2.fromOffset(900, 24), Konum = UDim2.fromScale(0.5, 0.52), Çapa Noktası = Vector2.new(0.5, 0.5),
     BackgroundTransparency = 1, Text = T("ld_sub"), TextColor3 = Color3.fromRGB(150, 152, 158), TextSize = 13,
-    Font = FNT.med, ZIndex = 201,
+    Yazı Tipi = FNT.med, ZIndex = 201,
   }, loadOv)
-  local barBg = new("Frame", {
-    Size = UDim2.fromOffset(280, 4), Position = UDim2.fromScale(0.5, 0.6), AnchorPoint = Vector2.new(0.5, 0.5),
+  yerel barBg = new("Çerçeve", {
+    Boyut = UDim2.fromOffset(280, 4), Konum = UDim2.fromScale(0.5, 0.6), Çapa Noktası = Vector2.new(0.5, 0.5),
     BackgroundColor3 = Color3.fromRGB(40, 42, 48), BorderSizePixel = 0, ZIndex = 201,
   }, loadOv)
-  local bar = new("Frame", { Size = UDim2.fromOffset(0, 4), BackgroundColor3 = accent, BorderSizePixel = 0, ZIndex = 202 }, barBg)
-  safe(function()
+  yerel çubuk = yeni("Çerçeve", { Boyut = UDim2.fromOffset(0, 4), Arka Plan Rengi3 = vurgu, Kenar Boyutu Pikseli = 0, Z İndeksi = 202 }, çubukBg)
+  güvenli(fonksiyon()
     TweenService:Create(bar, TweenInfo.new(1.1, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
-      { Size = UDim2.fromOffset(280, 4) }):Play()
-  end)
+      { Boyut = UDim2.fromOffset(280, 4) }):Oynat()
+  son)
 
-  -- CREATE: ayrı bölüm. Başarısızsa loading kapanır, hub'da kalınır.
-  local busy = false
+  -- CREATE: ayrı bölüm. Başarısızsa yükleme kapanır, hub'da kalınır.
+  yerel meşgul = yanlış
   createBtn.MouseButton1Click:Connect(function()
-    if busy or closing then return end
-    busy = true
-    safe(function() loadOv.Visible = true end)
-    spawn(function()
-      local t0 = os.clock()
-      local ok, mod = fetchLoad(CREATE_URL)
-      if ok and not (type(mod) == "table" and type(mod.open) == "function") then
-        ok, mod = false, "create a code open() yok"
-      end
-      local rest = 1.0 - (os.clock() - t0)
-      if rest > 0 then sleep(rest) end
-      busy = false
-      if not alive then return end
-      if ok then
-        local ctx2 = {}
+    Meşgul veya kapanıyorsa, son'a dön.
+    meşgul = doğru
+    güvenli(function() loadOv.Visible = true end)
+    spawn(fonksiyon()
+      yerel t0 = os.clock()
+      yerel tamam, mod = fetchLoad(CREATE_URL)
+      eğer uygunsa ve (type(mod) == "table" ve type(mod.open) == "function") değilse o zaman
+        tamam, mod = false, "bir kod oluştur open() yok"
+      son
+      yerel dinlenme = 1.0 - (os.clock() - t0)
+      Eğer dinlenme sayısı 0 ise, dinlenmeyi sonlandır.
+      meşgul = yanlış
+      Eğer hayatta değilse, geri dön.
+      Eğer uygunsa o zaman
+        yerel ctx2 = {}
         for k, v in pairs(ctx) do ctx2[k] = v end
         ctx2.onBack = function() M.open(ctx) end
-        close()
-        local okO, errO = pcall(mod.open, ctx2)
-        if not okO then
+        kapalı()
+        yerel okO, errO = pcall(mod.open, ctx2)
+        eğer okO değilse o zaman
           print("[scripthub] create acilamadi: " .. tostring(errO))
           M.open(ctx)
-        end
-      else
+        son
+      başka
         print("[scripthub] create basarisiz: " .. tostring(mod))
-        safe(function() loadOv.Visible = false end)
-        toast(T("not_ready"), C.danger)
-      end
-    end)
-  end)
+        güvenli(function() loadOv.Visible = false end)
+        toast(T("hazır_değil"), C.danger)
+      son
+    son)
+  son)
 
   -- GERİ: ana menüyü yeniden yükle
   backBtn.MouseButton1Click:Connect(function()
-    if closing or busy then return end
-    closing = true
-    spawn(function()
-      local src = httpGet(ctx.menuUrl or (BASE .. "main-menu"))
-      local fn, err
-      if src and type(loadstring) == "function" then fn, err = loadstring(src) end
-      if not fn then
-        closing = false
+    Kapanıyorsa veya meşgulse, sonu döndürün.
+    kapanış = doğru
+    spawn(fonksiyon()
+      yerel kaynak = httpGet(ctx.menuUrl veya (BASE .. "main-menu"))
+      yerel fonksiyon, hata
+      Eğer src ve type(loadstring) == "function" ise, fn ve err = loadstring(src) olur.
+      eğer fn değilse o zaman
+        kapanış = yanlış
         print("[scripthub] main-menu yuklenemedi: " .. tostring(err))
-        toast(T("menu_fail"), C.danger)
-        return
-      end
-      close()
+        toast(T("menü_başarısız"), C.danger)
+        geri dönmek
+      son
+      kapalı()
       S.MAIN_READY = nil
-      local okR, errR = pcall(fn)
-      if not okR then print("[scripthub] main-menu hatasi: " .. tostring(errR)) end
-    end)
-  end)
+      yerel okR, errR = pcall(fn)
+      Eğer okR değilse, "[scripthub] main-menu hatası: " .. tostring(errR)) yazdır.
+    son)
+  son)
 
-  refreshTabs()
-  refresh()
-end
 
-return M
+  -- X: küçült -> kareye dön -> "CR" logosu -> kenara git. Logoya basınca geri açın.
+  yerel olarak en aza indirildi = yanlış
+  yerel gizli çocuklar = {}
+  yerel logoBtn = new("TextButton", {
+    Boyut = UDim2.fromScale(1, 1), Arka Plan Şeffaflığı = 1, Metin = "CR", Metin Rengi3 = C.white, Metin Boyutu = 22,
+    Yazı Tipi = FNT.bold, OtomatikDüğmeRengi = false, Görünürlük = false, ZIndex = 100,
+  }, pencere)
+  yerel fonksiyon setMin(on)
+    Eğer on == minimized veya closing ise, end'i döndürün.
+    minimize edilmiş = üzerinde
+    eğer o zaman
+      güvenli(function() window.ClipsDescendants = true end)
+      tw(window, { Size = UDim2.fromOffset(64, 64), BackgroundColor3 = accent }, 0.3)
+      tw(bg, { BackgroundTransparency = 1 }, 0.3)
+      gecikme(0.34, fonksiyon())
+        Eğer küçültülmemişse veya hayatta değilse, sonu döndür.
+        for _, c in ipairs(window:GetChildren()) do
+          Eğer c, logoBtn'ye eşitse ve c bir "GuiObject" ise, hiddenKids[c]'yi c.Visible olarak ayarlayın; c.Visible'ı false olarak ayarlayın.
+        son
+        logoBtn.Visible = true
+        tw(window, { Position = UDim2.new(1, -52, 0.5, 0) }, 0.5)
+      son)
+    başka
+      logoBtn.Visible = false
+      tw(window, { Position = UDim2.fromScale(0.5, 0.5) }, 0.3)
+      gecikme(0.32, fonksiyon())
+        Eğer küçültülmüşse veya hayatta değilse, sonu döndür.
+        tw(window, { Size = UDim2.fromOffset(WIN_W, WIN_H), BackgroundColor3 = C.panel }, 0.3)
+        tw(bg, { BackgroundTransparency = (ctx.bg == false) and 0 or 1 }, 0.3)
+        gecikme(0.3, fonksiyon())
+          Eğer küçültülmüşse veya hayatta değilse, sonu döndür.
+          for c, v in pairs(hiddenKids) do safe(function() c.Visible = v end) end
+          gizliÇocuklar = {}
+          güvenli(function() window.ClipsDescendants = false end)
+        son)
+      son)
+    son
+  son
+  xBtn.MouseButton1Click:Connect(function() setMin(true) end)
+  logoBtn.MouseButton1Click:Connect(function() setMin(false) end)
+
+  Sekmeleri yenile()
+  yenile()
+son
+
+M'yi döndür
