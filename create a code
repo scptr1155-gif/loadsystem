@@ -1,4 +1,4 @@
--- create a code | SCRIPT OLUŞTUR VE YAYINLA (v2.1)
+-- create a code | SCRIPT OLUŞTUR VE YAYINLA (v2.2)
 -- =========================================================
 -- scripthub'daki CREATE tuşu bu dosyayı indirir ve open(ctx) çağırır.
 -- Form: script adı, resim ID, açıklama, kod. YAYINLA tuşu:
@@ -8,24 +8,18 @@
 --   3. Kodu o ID'li dosya olarak yazar (örn. 000000001) ve index'e kaydı ekler.
 --   (main-file dosyasına dokunulmaz.)
 --
--- v2.1 düzeltmeleri:
--- * Yayınlama takılı kalmaz: tüm akış pcall içinde, istekler zaman aşımlı.
--- * Açıklama/ad UTF-8 güvenli kısaltılır (Türkçe harf ortadan bölününce JSON bozuluyordu).
--- * JSON artık dahili kodla yapılır (verify ile aynı); HttpService'e bağlı değil.
--- * Index okunamazsa/bozuksa ÜZERİNE YAZILMAZ (eskiden tüm liste silinebiliyordu).
--- * Çakışmada yazılan kod dosyası yeniden kullanılır (boş ID dosyası kalmaz).
--- * İstek katmanı: request / http_request / syn.request / HttpService yedekleri.
--- * Hata mesajları net: depo bulunamadı, yetki yok, GitHub'ın kendi mesajı vb.
--- * Başarılı olunca ID panoya kopyalanır (setclipboard varsa).
+-- v2.2 değişiklikleri:
+-- * api-key okuma daha sağlam: tırnak, "Bearer ", "token " gibi fazlalıkları temizler.
+-- * Hata olursa kaç anahtar okunduğu ve anahtarın ilk harfleri toast'ta görünür
+--   (anahtarın kendisi ASLA gösterilmez / yazdırılmaz).
+-- * Konsola [create] satırları yazılır (kaç anahtar, uzunluk, ilk 4 harf).
 --
 -- api-key dosyası biçimi (her satır bir anahtar, # ile başlayan satırlar yok sayılır):
---   ghp_xxx...            düz anahtar
---   rev:<ters yazılmış>   anahtarın ters çevrilmiş hali
+--   github_pat_xxx...     düz anahtar (GitHub herkese açık depoda iptal eder!)
+--   rev:<ters yazılmış>   anahtarın ters çevrilmiş hali  (ÖNERİLEN)
 --   b64:<base64>          anahtarın base64 hali
--- Not: GitHub, herkese açık depoda düz duran anahtarı otomatik iptal edebilir.
---      rev: veya b64: bunu atlatır ama gizlilik DEĞİLDİR; dosyayı okuyan herkes
---      anahtarı çözebilir. Anahtarı sadece roblox-game-star deposuna
---      (Contents: read/write) yetkili ayrı bir token yap.
+-- Not: rev: veya b64: sadece GitHub'ın otomatik iptalini atlatır, gizlilik DEĞİLDİR.
+--      Anahtarı sadece roblox-game-star deposuna (Contents: read/write) yetkili yap.
 --
 -- ctx: { lang, accent, bg, anim, nick, player, onBack }
 
@@ -92,6 +86,7 @@ local STR = {
     write_fail = "Kod yazılamadı", conflict = "Çakışma, tekrar dene.",
     id_full = "ID sınırına ulaşıldı.",
     retry_hint = " (Aynı kodla tekrar basarsan yine de yayınlanır.)",
+    key_info = "okunan anahtar", key_start = "başlangıç", key_len = "uzunluk",
   },
   en = {
     back = "← BACK", title = "Create Script", sub = "Publish your script; anyone can call it by ID",
@@ -110,6 +105,7 @@ local STR = {
     write_fail = "Could not write code", conflict = "Conflict, try again.",
     id_full = "ID limit reached.",
     retry_hint = " (Press again with the same code to publish anyway.)",
+    key_info = "keys read", key_start = "starts with", key_len = "length",
   },
 }
 
@@ -457,20 +453,40 @@ end
 
 --------------------------------------------------------------
 -- API anahtarı (loadsystem/api-key)
+-- Dönüş: anahtarListesi, bilgiMetni
 --------------------------------------------------------------
 local function readKeys()
   local ok, src = pcall(function() return game:HttpGet(KEY_URL .. "?t=" .. tostring(os.time())) end)
-  if not ok or type(src) ~= "string" or src:sub(1, 14) == "404: Not Found" then return {} end
+  if not ok or type(src) ~= "string" or src:sub(1, 14) == "404: Not Found" then
+    print("[create] api-key okunamadi")
+    return {}, "api-key okunamadi"
+  end
+
   local keys = {}
   for line in (src .. "\n"):gmatch("(.-)\n") do
     line = line:gsub("%s+", "")
     if line ~= "" and line:sub(1, 1) ~= "#" then
+      -- tırnak ve yaygın fazlalıkları temizle
+      line = line:gsub("[\"'`]", "")
+      if line:sub(1, 7):lower() == "bearer:" then line = line:sub(8)
+      elseif line:sub(1, 6):lower() == "bearer" then line = line:sub(7) end
+      if line:sub(1, 6):lower() == "token:" then line = line:sub(7) end
+
       if line:sub(1, 4) == "rev:" then line = line:sub(5):reverse()
       elseif line:sub(1, 4) == "b64:" then line = b64decode(line:sub(5)) end
-      if line ~= "" then keys[#keys + 1] = line end
+
+      line = line:gsub("%s+", "")
+      if #line >= 20 then keys[#keys + 1] = line end
     end
   end
-  return keys
+
+  print("[create] okunan anahtar sayisi: " .. #keys)
+  local info = {}
+  for i, k in ipairs(keys) do
+    print("[create] anahtar " .. i .. ": " .. k:sub(1, 4) .. "... (uzunluk " .. #k .. ")")
+    info[#info + 1] = k:sub(1, 4) .. "…/" .. #k
+  end
+  return keys, #keys .. " | " .. table.concat(info, ", ")
 end
 
 --------------------------------------------------------------
@@ -794,19 +810,26 @@ function M.open(ctx)
 
     spawn(function()
       -- Her durumda düğme serbest kalsın diye tüm akış pcall içinde
-      local okRun, ok, res = pcall(function()
-        local keys = readKeys()
+      local okRun, ok, res, keyInfo = pcall(function()
+        local keys, info = readKeys()
         local o, r = false, T("no_key")
+        local authFailed = false
         for _, k in ipairs(keys) do
           local o2, r2, authFail = publishWith(k, data, T)
           o, r = o2, r2
+          authFailed = authFail and true or false
           if o or not authFail then break end
         end
-        return o, r
+        -- yetki hatasında anahtar bilgisini (anahtarın kendisi değil) ekle
+        if not o and (authFailed or #keys == 0) then
+          return o, r, T("key_info") .. ": " .. tostring(info)
+        end
+        return o, r, nil
       end)
       if not okRun then
         res = "Hata: " .. shortErr(ok)
         ok = false
+        keyInfo = nil
       end
 
       publishing = false
@@ -822,7 +845,9 @@ function M.open(ctx)
         safe(function() fName.Text, fImage.Text, fDesc.Text, fCode.Text = "", "", "", "" end)
         lastBad = nil
       else
-        toast(T("pub_fail") .. tostring(res), C.danger, 8)
+        local msg = T("pub_fail") .. tostring(res)
+        if keyInfo then msg = msg .. "  (" .. keyInfo .. ")" end
+        toast(msg, C.danger, 10)
       end
     end)
   end)
