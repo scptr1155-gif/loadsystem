@@ -25,8 +25,13 @@ end
 
 local function new(class, props, parent)
   local o = Instance.new(class)
-  if props then for k, v in pairs(props) do o[k] = v end end
-  if parent then o.Parent = parent end
+  -- Tek yanlis ozellik tum paneli cokertmesin
+  if props then
+    for k, v in pairs(props) do
+      pcall(function() o[k] = v end)
+    end
+  end
+  if parent then pcall(function() o.Parent = parent end) end
   return o
 end
 
@@ -116,7 +121,7 @@ local function build()
   local card = new("Frame", {
     Size = UDim2.fromOffset(CARD_W, CARD_H),
     Position = UDim2.fromScale(0.5, 0.5),
-    AnchorPoint = UDim2.fromScale(0.5, 0.5),
+    AnchorPoint = Vector2.new(0.5, 0.5),
     BackgroundColor3 = C.card,
     BorderSizePixel = 0,
     ZIndex = 2,
