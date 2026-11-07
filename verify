@@ -1213,12 +1213,18 @@ local function main()
 
   -- 3) arayuzu calistir
   print("[loadsystem] arayuz calistiriliyor")
+  S.__VERIFY_LOADING = true
   local GUI, lerr = loadChunk(code, FILE_GUI)
+  S.__VERIFY_LOADING = nil
   if not GUI or type(GUI.build) ~= "function" then
     boot.fail("ARAYUZ HATASI", "verify-gui: " .. tostring(lerr or "bilinmeyen hata"))
     return
   end
   S.GUI = GUI
+  -- verify-gui tek basina calistirilip demo panel acmisse onu kapat
+  if GUI.__standalone and GUI.__standalonePanel then
+    pcall(function() GUI.__standalonePanel.close() end)
+  end
 
   -- 4) beyaz paneli kur
   print("[loadsystem] panel kuruluyor")
