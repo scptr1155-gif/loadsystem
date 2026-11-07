@@ -478,7 +478,7 @@ fonksiyon M.open(ctx)
       başka
         print("[scripthub] create basarisiz: " .. tostring(mod))
         güvenli(function() loadOv.Visible = false end)
-        toast(T("hazır_değil"), C.danger)
+        toast(T("not_ready") .. " [" .. tostring(mod):sub(1, 48) .. "]", C.danger)
       son
     son)
   son)
