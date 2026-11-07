@@ -16,9 +16,84 @@
   HTTP / Base64 / JSON / \u{015F}ifreleme katman\u{0131}n\u{0131} i\u{00E7}inde bar\u{0131}nd\u{0131}r\u{0130}.
 ]]
 
-local G = (type(getgenv) == "function" and getgenv()) or _G
-local S = G.__LOADSYS or {}
-G.__LOADSYS = S
+local function safe(fn, ...)
+  local ok, a, b = pcall(fn, ...)
+  if ok then return true, a, b end
+  return false, a
+end
+
+-- Ortam: getgenv yoksa veya salt-okunur olsa da sistem calismaya devam etmeli
+local G = {}
+do
+  local ok, g = safe(function()
+    if type(getgenv) == "function" then return getgenv() end
+    return _G
+  end)
+  if ok and type(g) == "table" then G = g end
+end
+
+local S = {}
+do
+  local ok, s = safe(function() return G.__LOADSYS end)
+  if ok and type(s) == "table" then S = s end
+end
+safe(function() G.__LOADSYS = S end)
+
+-- Temel yardimcilar (tum erisimler korumali)
+local function mk(class, props)
+  local ok, o = safe(function() return Instance.new(class) end)
+  if not ok or not o then return nil end
+  for k, v in pairs(props or {}) do
+    safe(function() o[k] = v end)
+  end
+  return o
+end
+
+local function rgb(r, g, b)
+  local ok, c = safe(function() return Color3.fromRGB(r, g, b) end)
+  if ok then return c end
+  return nil
+end
+
+local function u2full()
+  local ok, v = safe(function() return UDim2.new(1, 0, 1, 0) end)
+  return ok and v or nil
+end
+
+local function u2off(x, y)
+  local ok, v = safe(function() return UDim2.fromOffset(x, y) end)
+  return ok and v or nil
+end
+
+local function u2scale(x, y)
+  local ok, v = safe(function() return UDim2.fromScale(x, y) end)
+  return ok and v or nil
+end
+
+local function v2scale(x, y)
+  local ok, v = safe(function() return Vector2.new(x, y) end)
+  return ok and v or nil
+end
+
+local function uround(r)
+  local ok, v = safe(function() return UDim.new(0, r) end)
+  return ok and v or nil
+end
+
+local function font(name)
+  local ok, v = safe(function() return Enum.Font[name] end)
+  return ok and v or nil
+end
+
+local function alignX(name)
+  local ok, v = safe(function() return Enum.TextXAlignment[name] end)
+  return ok and v or nil
+end
+
+local function alignY(name)
+  local ok, v = safe(function() return Enum.TextYAlignment[name] end)
+  return ok and v or nil
+end
 
 local function getService(name)
   local ok, s = pcall(function() return game:GetService(name) end)
@@ -60,6 +135,185 @@ local FILE_PLAYER = "player"
 
 -- \u{015E}ifreli GitHub API anahtar\u{0131} (PAT). D\u{00FCz metni dahildir, sadece \u{0130}\u{00E7}ilmi\u{015F} hali tutulur.
 -- Yeni bir PAT almak i\u{00E7}in:  python3 gen.py --pat <PAT> --patch verify
+-- Tween calismazsa hedef degerleri aninda uygula
+local function applyGoal(obj, goal)
+  if not obj or type(goal) ~= "table" then return end
+  for k, v in pairs(goal) do
+    safe(function() obj[k] = v end)
+  end
+end
+
+local function buildBoot()
+  local gui = mk("ScreenGui", {
+    Name = "LoadSystemBoot",
+    ResetOnSpawn = false,
+    IgnoreGuiInset = true,
+    DisplayOrder = 999,
+  })
+  if not gui then return nil end
+  attachGui(gui)
+
+  local bg = mk("Frame", {
+    Name = "Background",
+    Size = u2full(),
+    BackgroundColor3 = rgb(0, 0, 0),
+    BorderSizePixel = 0,
+    ZIndex = 1,
+  })
+  if not bg then return nil end
+  bg.Parent = gui
+
+  local title = mk("TextLabel", {
+    Name = "Title",
+    Size = u2off(900, 56),
+    Position = u2scale(0.5, 0.42),
+    AnchorPoint = v2scale(0.5, 0.5),
+    BackgroundTransparency = 1,
+    Text = "LOADING",
+    TextColor3 = rgb(255, 255, 255),
+    TextSize = 42,
+    Font = font("GothamBold"),
+    TextXAlignment = alignX("Center"),
+    TextWrapped = true,
+    ZIndex = 2,
+  })
+  if title then title.Parent = bg end
+
+  local sub = mk("TextLabel", {
+    Name = "Sub",
+    Size = u2off(900, 24),
+    Position = u2scale(0.5, 0.49),
+    AnchorPoint = v2scale(0.5, 0.5),
+    BackgroundTransparency = 1,
+    Text = "SISTEM YUKLENIYOR",
+    TextColor3 = rgb(150, 152, 158),
+    TextSize = 13,
+    Font = font("GothamMedium"),
+    TextXAlignment = alignX("Center"),
+    ZIndex = 2,
+  })
+  if sub then sub.Parent = bg end
+
+  local detail = mk("TextLabel", {
+    Name = "Detail",
+    Size = u2off(840, 70),
+    Position = u2scale(0.5, 0.57),
+    AnchorPoint = v2scale(0.5, 0.5),
+    BackgroundTransparency = 1,
+    Text = "",
+    TextColor3 = rgb(120, 124, 132),
+    TextSize = 12,
+    Font = font("Gotham"),
+    TextWrapped = true,
+    TextXAlignment = alignX("Center"),
+    ZIndex = 2,
+  })
+  if detail then detail.Parent = bg end
+
+  local barBg = mk("Frame", {
+    Name = "BarBg",
+    Size = u2off(280, 4),
+    Position = u2scale(0.5, 0.65),
+    AnchorPoint = v2scale(0.5, 0.5),
+    BackgroundColor3 = rgb(40, 42, 48),
+    BorderSizePixel = 0,
+    ZIndex = 2,
+  })
+  if barBg then barBg.Parent = bg end
+
+  local bar = mk("Frame", {
+    Name = "Bar",
+    Size = u2off(0, 4),
+    BackgroundColor3 = rgb(88, 101, 242),
+    BorderSizePixel = 0,
+    ZIndex = 3,
+  })
+  if bar and barBg then bar.Parent = barBg end
+  if bar then
+    local corner = mk("UICorner", { CornerRadius = uround(2) })
+    if corner then corner.Parent = bar end
+  end
+
+  safe(function()
+    if TweenService then
+      local t = TweenService:Create(bar,
+        TweenInfo.new(1.1, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
+        { Size = u2off(280, 4) })
+      t:Play()
+    end
+  end)
+
+  local retry = mk("TextButton", {
+    Name = "Retry",
+    Size = u2off(240, 48),
+    Position = u2scale(0.5, 0.73),
+    AnchorPoint = v2scale(0.5, 0.5),
+    BackgroundColor3 = rgb(24, 26, 31),
+    BorderSizePixel = 0,
+    Text = "TEKRAR DENE",
+    TextColor3 = rgb(255, 255, 255),
+    TextSize = 15,
+    Font = font("GothamBold"),
+    Visible = false,
+    ZIndex = 3,
+  })
+  if retry then
+    retry.Parent = bg
+    local corner = mk("UICorner", { CornerRadius = uround(12) })
+    if corner then corner.Parent = retry end
+  end
+
+  local boot = {
+    gui = gui, bg = bg, title = title, sub = sub, bar = bar,
+    detail = detail, retry = retry, barBg = barBg,
+    setText = function(text, subText)
+      if title then safe(function() title.Text = text end) end
+      if subText and sub then safe(function() sub.Text = subText end) end
+    end,
+    setDetail = function(text)
+      if detail then safe(function() detail.Text = tostring(text or "") end) end
+    end,
+    reset = function()
+      safe(function() boot.dismissed = false end)
+      if title then
+        safe(function() title.Text = "LOADING" end)
+        safe(function() title.TextColor3 = rgb(255, 255, 255) end)
+      end
+      if sub then safe(function() sub.Text = "SISTEM YUKLENIYOR" end) end
+      if detail then safe(function() detail.Text = "" end) end
+      if barBg then safe(function() barBg.Visible = true end) end
+      if retry then safe(function() retry.Visible = false end) end
+    end,
+    fail = function(text, why)
+      if title then
+        safe(function() title.Text = text end)
+        safe(function() title.TextColor3 = rgb(224, 80, 80) end)
+      end
+      if sub then safe(function() sub.Text = "SISTEM YUKLENEMEDI" end) end
+      if detail then
+        safe(function() detail.Text = tostring(why or "") end)
+        safe(function() detail.TextColor3 = rgb(190, 120, 120) end)
+      end
+      if barBg then safe(function() barBg.Visible = false end) end
+      if retry then safe(function() retry.Visible = true end) end
+      print("[loadsystem] HATA: " .. tostring(text) .. " | " .. tostring(why or ""))
+    end,
+    setRetry = function(fn)
+      if retry then safe(function() retry.MouseButton1Click:Connect(fn) end) end
+    end,
+  }
+  return boot
+end
+
+-- EKRAN ILK OLUSTURULUR: sonradan hata olsa bile kullanici gorur
+local BOOT = (function()
+  local ok, b = safe(buildBoot)
+  if ok and type(b) == "table" then return b end
+  print("[loadsystem] ekran olusturulamadi: " .. tostring(b))
+  return nil
+end)()
+if BOOT then print("[loadsystem] ekran hazir") end
+
 local CIPHER = {
   KEY = { "l0ad", "-sys::", "v1::", "9x4q" },
   BLOB = "du3Pn818Zyp4cDY3pTAjkeEilbc6GnT+EcIzVgYBDqtVqoIL7eX60w7yydbOo2PM+dDzFq1RRSw9bm2EyNmNYq9PvPDfLkzbL1Qr5/w1G3UBK4Qckj2HmdvxzFmbDJFNdQ==",
@@ -649,141 +903,6 @@ end
 --------------------------------------------------------------
 -- G\u{00D6}R\u{00C4}N\u{00DC} EKRAN (siyah + LOADING)
 --------------------------------------------------------------
-local function buildBoot()
-  local gui = Instance.new("ScreenGui")
-  gui.Name = "LoadSystemBoot"
-  gui.ResetOnSpawn = false
-  gui.IgnoreGuiInset = true
-  gui.DisplayOrder = 999
-  gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-  attachGui(gui)
-
-  local bg = Instance.new("Frame")
-  bg.Name = "Background"
-  bg.Size = UDim2.new(1, 0, 1, 0)
-  bg.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-  bg.BorderSizePixel = 0
-  bg.ZIndex = 1
-  bg.Parent = gui
-
-  local title = Instance.new("TextLabel")
-  title.Name = "Title"
-  title.Size = UDim2.fromOffset(900, 56)
-  title.Position = UDim2.fromScale(0.5, 0.42)
-  title.AnchorPoint = UDim2.fromScale(0.5, 0.5)
-  title.BackgroundTransparency = 1
-  title.Text = "LOADING"
-  title.TextColor3 = Color3.fromRGB(255, 255, 255)
-  title.TextSize = 42
-  title.Font = Enum.Font.GothamBold
-  title.TextXAlignment = Enum.TextXAlignment.Center
-  title.TextWrapped = true
-  title.ZIndex = 2
-  title.Parent = bg
-
-  local sub = Instance.new("TextLabel")
-  sub.Name = "Sub"
-  sub.Size = UDim2.fromOffset(900, 24)
-  sub.Position = UDim2.fromScale(0.5, 0.49)
-  sub.AnchorPoint = UDim2.fromScale(0.5, 0.5)
-  sub.BackgroundTransparency = 1
-  sub.Text = "SISTEM YUKLENIYOR"
-  sub.TextColor3 = Color3.fromRGB(150, 152, 158)
-  sub.TextSize = 13
-  sub.Font = Enum.Font.GothamMedium
-  sub.TextXAlignment = Enum.TextXAlignment.Center
-  sub.ZIndex = 2
-  sub.Parent = bg
-
-  -- Hata detayi (her zaman gorunur, sorun olursa buraya yazilir)
-  local detail = Instance.new("TextLabel")
-  detail.Name = "Detail"
-  detail.Size = UDim2.fromOffset(820, 60)
-  detail.Position = UDim2.fromScale(0.5, 0.56)
-  detail.AnchorPoint = UDim2.fromScale(0.5, 0.5)
-  detail.BackgroundTransparency = 1
-  detail.Text = ""
-  detail.TextColor3 = Color3.fromRGB(120, 124, 132)
-  detail.TextSize = 12
-  detail.Font = Enum.Font.Gotham
-  detail.TextWrapped = true
-  detail.TextXAlignment = Enum.TextXAlignment.Center
-  detail.ZIndex = 2
-  detail.Parent = bg
-
-  local barBg = Instance.new("Frame")
-  barBg.Name = "BarBg"
-  barBg.Size = UDim2.fromOffset(280, 4)
-  barBg.Position = UDim2.fromScale(0.5, 0.63)
-  barBg.AnchorPoint = UDim2.fromScale(0.5, 0.5)
-  barBg.BackgroundColor3 = Color3.fromRGB(40, 42, 48)
-  barBg.BorderSizePixel = 0
-  barBg.ZIndex = 2
-  barBg.Parent = bg
-
-  local bar = Instance.new("Frame")
-  bar.Name = "Bar"
-  bar.Size = UDim2.fromOffset(0, 4)
-  bar.Position = UDim2.fromOffset(0, 0)
-  bar.BackgroundColor3 = Color3.fromRGB(88, 101, 242)
-  bar.BorderSizePixel = 0
-  bar.ZIndex = 3
-  bar.Parent = barBg
-  Instance.new("UICorner", { CornerRadius = UDim.new(0, 2) }).Parent = bar
-
-  pcall(function()
-    local t = TweenService:Create(bar,
-      TweenInfo.new(1.1, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
-      { Size = UDim2.fromOffset(280, 4) })
-    t:Play()
-  end)
-
-  -- TEKRAR DENE butonu (hata olunca gorunur)
-  local retry = Instance.new("TextButton")
-  retry.Name = "Retry"
-  retry.Size = UDim2.fromOffset(240, 48)
-  retry.Position = UDim2.fromScale(0.5, 0.72)
-  retry.AnchorPoint = UDim2.fromScale(0.5, 0.5)
-  retry.BackgroundColor3 = Color3.fromRGB(24, 26, 31)
-  retry.BorderSizePixel = 0
-  retry.Text = "TEKRAR DENE"
-  retry.TextColor3 = Color3.fromRGB(255, 255, 255)
-  retry.TextSize = 15
-  retry.Font = Enum.Font.GothamBold
-  retry.Visible = false
-  retry.ZIndex = 3
-  retry.Parent = bg
-  Instance.new("UICorner", { CornerRadius = UDim.new(0, 12) }).Parent = retry
-
-  local boot = {
-    gui = gui, bg = bg, title = title, sub = sub, bar = bar, detail = detail,
-    setText = function(text, subText)
-      if title then title.Text = text end
-      if subText and sub then sub.Text = subText end
-    end,
-    setDetail = function(text)
-      if detail then detail.Text = tostring(text or "") end
-    end,
-    fail = function(text, why)
-      if title then
-        title.Text = text
-        title.TextColor3 = Color3.fromRGB(224, 80, 80)
-      end
-      if sub then sub.Text = "SISTEM YUKLENEMEDI" end
-      if detail then
-        detail.Text = tostring(why or "")
-        detail.TextColor3 = Color3.fromRGB(190, 120, 120)
-      end
-      if barBg then barBg.Visible = false end
-      if retry then retry.Visible = true end
-    end,
-    setRetry = function(fn)
-      if retry then retry.MouseButton1Click:Connect(fn) end
-    end,
-  }
-  return boot
-end
-
 local function buildCurtain()
   local gui = Instance.new("ScreenGui")
   gui.Name = "LoadSystemCurtain"
@@ -803,7 +922,7 @@ local function buildCurtain()
   local title = Instance.new("TextLabel")
   title.Size = UDim2.fromOffset(700, 56)
   title.Position = UDim2.fromScale(0.5, 0.46)
-  title.AnchorPoint = UDim2.fromScale(0.5, 0.5)
+  title.AnchorPoint = Vector2.new(0.5, 0.5)
   title.BackgroundTransparency = 1
   title.Text = "LOADING MAIN MENU"
   title.TextColor3 = Color3.fromRGB(255, 255, 255)
@@ -816,7 +935,7 @@ local function buildCurtain()
   local sub = Instance.new("TextLabel")
   sub.Size = UDim2.fromOffset(700, 24)
   sub.Position = UDim2.fromScale(0.5, 0.53)
-  sub.AnchorPoint = UDim2.fromScale(0.5, 0.5)
+  sub.AnchorPoint = Vector2.new(0.5, 0.5)
   sub.BackgroundTransparency = 1
   sub.Text = "ARAYUZ HAZIRLANIYOR"
   sub.TextColor3 = Color3.fromRGB(150, 152, 158)
@@ -829,7 +948,7 @@ local function buildCurtain()
   local retry = Instance.new("TextButton")
   retry.Size = UDim2.fromOffset(220, 46)
   retry.Position = UDim2.fromScale(0.5, 0.6)
-  retry.AnchorPoint = UDim2.fromScale(0.5, 0.5)
+  retry.AnchorPoint = Vector2.new(0.5, 0.5)
   retry.BackgroundColor3 = Color3.fromRGB(24, 26, 31)
   retry.BorderSizePixel = 0
   retry.Text = "TEKRAR DENE"
@@ -1055,17 +1174,26 @@ local function onRegister(name, nick, pass)
 end
 
 local function main()
-  -- Onceki yukleme ekranini temizle (yeniden denemede)
-  if S.boot and S.boot.gui then
-    pcall(function() S.boot.gui:Destroy() end)
-  end
   panel = nil
-
-  local boot = buildBoot()
+  local boot = BOOT
+  if not boot then
+    boot = (function()
+      local ok, b = safe(buildBoot)
+      if ok and type(b) == "table" then return b end
+      return nil
+    end)()
+  end
+  if not boot then
+    print("[loadsystem] ekran yok, akis iptal")
+    return
+  end
   S.boot = boot
+  boot.reset()
   boot.setRetry(function()
+    print("[loadsystem] tekrar deneniyor")
     spawn(main)
   end)
+  print("[loadsystem] yukleme basladi")
 
   -- 1) API anahtarini coz
   TOKEN = decryptBlob(CIPHER.KEY, CIPHER.BLOB)
@@ -1076,6 +1204,7 @@ local function main()
 
   -- 2) arayuzu indir
   boot.setText("LOADING", "ARAYUZ INDIRILIYOR")
+  print("[loadsystem] arayuz indiriliyor")
   local code, err = fetchRepoFile(FILE_GUI, TOKEN)
   if not code then
     boot.fail("ARAYUZ YUKLENEMEDI", "verify-gui: " .. tostring(err or "bilinmeyen hata"))
@@ -1083,6 +1212,7 @@ local function main()
   end
 
   -- 3) arayuzu calistir
+  print("[loadsystem] arayuz calistiriliyor")
   local GUI, lerr = loadChunk(code, FILE_GUI)
   if not GUI or type(GUI.build) ~= "function" then
     boot.fail("ARAYUZ HATASI", "verify-gui: " .. tostring(lerr or "bilinmeyen hata"))
@@ -1091,6 +1221,7 @@ local function main()
   S.GUI = GUI
 
   -- 4) beyaz paneli kur
+  print("[loadsystem] panel kuruluyor")
   local okBuild, panelOrErr = pcall(GUI.build, {
     username = getPlayerName(),
     onLogin = onLogin,
@@ -1103,6 +1234,7 @@ local function main()
   panel = panelOrErr
 
   -- 5) siyah ekrani animasyonla kaldir
+  print("[loadsystem] panel hazir, siyah ekran kaldiriliyor")
   sleep(0.45)
   pcall(function() GUI.dismissBoot() end)
 end
