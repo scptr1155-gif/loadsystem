@@ -458,13 +458,87 @@ function M.build(opts)
     else status.TextColor3 = C.muted end
   end
 
+  -- NOT: GroupTransparency, Frame'in gecerli uyesi DEGIL (bazi Roblox
+  -- surumlerinde hata verir: "GroupTransparency is not a valid member of Frame").
+  -- Bu yuzden panelleri cocuk seviyesinde saydamlastiriyoruz.
+  local ORIG = setmetatable({}, { __mode = "k" })
+
+  local function isTextLike(c)
+    local cn = c.ClassName
+    return cn == "TextLabel" or cn == "TextButton" or cn == "TextBox"
+  end
+
+  local function groupChildren(view)
+    local out = {}
+    local function walk(node)
+      local okc, kids = pcall(function() return node:GetChildren() end)
+      if okc and kids then
+        for _, c in ipairs(kids) do
+          out[#out + 1] = c
+          walk(c)
+        end
+      end
+    end
+    walk(view)
+    return out
+  end
+
+  -- amount: 1 = tamamen saydam, 0 = orijinal degere don
+  local function setAlpha(c, amount)
+    if isTextLike(c) then
+      if amount >= 1 then
+        if ORIG[c] == nil then
+          pcall(function() ORIG[c] = { TextTransparency = c.TextTransparency } end)
+        end
+        pcall(function() c.TextTransparency = 1 end)
+      else
+        local o = ORIG[c]
+        pcall(function() c.TextTransparency = (o and o.TextTransparency) or 0 end)
+      end
+    else
+      local cn = c.ClassName
+      if cn == "Frame" or cn == "ScrollingFrame" or cn == "ImageLabel" then
+        if amount >= 1 then
+          if ORIG[c] == nil then
+            pcall(function() ORIG[c] = { BackgroundTransparency = c.BackgroundTransparency } end)
+          end
+          pcall(function() c.BackgroundTransparency = 1 end)
+        else
+          local o = ORIG[c]
+          pcall(function() c.BackgroundTransparency = (o and o.BackgroundTransparency) or 0 end)
+        end
+      end
+    end
+  end
+
   local function show(view, others)
     for _, v in ipairs(others) do
-      v.Visible = false
+      pcall(function() v.Visible = false end)
     end
-    view.Visible = true
-    view.GroupTransparency = 1
-    tw(view, { GroupTransparency = 0 }, 0.25)
+    pcall(function() view.Visible = true end)
+
+    local kids = groupChildren(view)
+    for _, c in ipairs(kids) do setAlpha(c, 1) end
+
+    -- Geri ac: tween varsa animasyonla, yoksa aninda
+    local ok = false
+    if TweenService then
+      ok = pcall(function()
+        for _, c in ipairs(kids) do
+          local o = ORIG[c]
+          if isTextLike(c) then
+            local goal = (o and o.TextTransparency) or 0
+            TweenService:Create(c, TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { TextTransparency = goal }):Play()
+          else
+            local goal = (o and o.BackgroundTransparency) or 0
+            TweenService:Create(c, TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { BackgroundTransparency = goal }):Play()
+          end
+        end
+      end)
+    end
+    if not ok then
+      for _, c in ipairs(kids) do setAlpha(c, 0) end
+    end
   end
 
   local function showMenu()   show(menuView,  { loginView, regView }); end
