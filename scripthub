@@ -1,20 +1,18 @@
---[[
-  scripthub | SCRIPT HUB ANA SAYFA — OKUMA TARAFI (v1.0)
-  =========================================================
-  main-menu'deki SCRIPT HUB düğmesi bu dosyayı indirip çalıştırır.
-
-  Veri düzeni (repoda, herkese açık okunur):
-    hub/index.json   -> {"next":3,"scripts":[{id,name,author,desc,image,rating,uses,created}, ...]}
-    hub/<ID>.lua     -> o scriptin kodu (ID: 1, 2, 3 ... 10000 ...)
-
-  Döndürdüğü tablo (main-menu bunu kullanır):
-    list(sort, page) -> kart listesi   (sort: "new" | "top" | "popular")
-    get(id)          -> {id,name,author,desc,image,rating,uses,code}
-    run(id)          -> scripti ID ile çalıştırır
-
-  Not: hub/index.json henüz yoksa hub hata vermez, boş liste gösterir.
-  İlk script yayınlanınca index.json otomatik oluşturulur (create a code).
-]]
+-- scripthub | SCRIPT HUB ANA SAYFA — OKUMA TARAFI (v1.0)
+-- =========================================================
+-- main-menu'deki SCRIPT HUB düğmesi bu dosyayı indirip çalıştırır.
+--
+-- Veri düzeni (repoda, herkese açık okunur):
+-- hub/index.json   -> {"next":3,"scripts":[{id,name,author,desc,image,rating,uses,created}, ...]}
+-- hub/<ID>.lua     -> o scriptin kodu (ID: 1, 2, 3 ... 10000 ...)
+--
+-- Döndürdüğü tablo (main-menu bunu kullanır):
+-- list(sort, page) -> kart listesi   (sort: "new" | "top" | "popular")
+-- get(id)          -> {id,name,author,desc,image,rating,uses,code}
+-- run(id)          -> scripti ID ile çalıştırır
+--
+-- Not: hub/index.json henüz yoksa hub hata vermez, boş liste gösterir.
+-- İlk script yayınlanınca index.json otomatik oluşturulur (create a code).
 
 local BASE = "https://raw.githubusercontent.com/scptr1155-gif/loadsystem/refs/heads/main/hub/"
 local PAGE_SIZE = 50
