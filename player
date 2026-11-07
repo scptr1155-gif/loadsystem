@@ -1,1 +1,4 @@
-
+# player:OYUNCU_ISMI/playert:TAKMA_AD/password:SIFRE
+# Her satır bir oyuncudur. Parantez kullanmayın, "/" ve boşluk kullanmayın.
+# Kayıt satırı otomatik olarak bu dosyaya eklenir.
+player:DemoOyuncu/playert:demo/password:demo1234
