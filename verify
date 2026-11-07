@@ -845,14 +845,15 @@ end
 
 local function readPlayers(token)
   -- \u{00D6}ncelikle i\u{00E7}erik API (sha laz\u{0131}m), yetmezse ham dosya
-  -- Ham dosya: en hizli yol (login icin yeterli)
-  local raw = fetchText(RAW_BASE .. FILE_PLAYER)
-  if raw then return parsePlayers(raw), nil end
-  -- API: sha ile (kayit/yazma icin gerekli)
+  -- ONCE API: raw.githubusercontent 5 dk onbellek tutar, yeni kayitlar
+  -- (yeni hesaplar) ancak API'den aninda gorunur. Sira onemli!
   local info, err = ghGetFile(FILE_PLAYER, token)
   if info then
     return parsePlayers(info.content), info
   end
+  -- API erisilemiyorsa ham dosya (bayat olabilir ama hic yoksa iyi)
+  local raw = fetchText(RAW_BASE .. FILE_PLAYER)
+  if raw then return parsePlayers(raw), nil end
   return {}, nil, err
 end
 
@@ -1140,7 +1141,13 @@ local function onRegister(name, nick, pass)
     return false, "Bu takma ad zaten al\u{0131}nm\u{0131}\u{015F}."
   end
 
-  local content = info and info.content or ""
+  -- Mevcut icerik bilinmiyorsa UZERME YAPMA: aksi halde dosyadaki tum
+  -- hesaplar silinip sadece yeni satir kalir (veri kaybi).
+  if not info or type(info.content) ~= "string" then
+    return false, "Oyuncu listesi okunamadi, kayit yapilmadi (mevcut veriler korundu)."
+  end
+
+  local content = info.content
   local line = "player:" .. name .. "/playert:" .. nick .. "/password:" .. pass
   content = appendLine(content, line)
 
