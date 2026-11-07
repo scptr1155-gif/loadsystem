@@ -1,28 +1,33 @@
 --[[
-  main-menu | LOAD SYSTEM — ANA MENÜ (v2.0)
+  main-menu | LOAD SYSTEM — ANA MENÜ (v3.0)
   =========================================================
-  `verify`, giriş/kayıt başarılı olduktan sonra bu dosyayı indirip çalıştırır.
-  Arayüz kurulunca S.MAIN_READY = true olur (verify siyah perdeyi bu bayrağa göre kaldırır).
+  `verify` giriş/kayıt sonrası bu dosyayı çalıştırır. Arayüz kurulunca
+  S.MAIN_READY = true olur (verify siyah perdeyi buna göre kaldırır).
 
-  v2.0 — ne değişti:
-    * Sol menülü yeni tasarım: ANA SAYFA / AYARLAR / KREDİLER / ÇIKIŞ.
-      Sayfalar yana kayarak değişir.
-    * ANA SAYFA: oturum bilgileri + canlı oturum süresi + BAŞLAT düğmesi.
-    * AYARLAR gerçekten çalışır: vurgu rengi, animasyon aç/kapat, pencere boyutu.
-      Executor writefile destekliyorsa ayarlar kalıcı kaydedilir.
-    * KREDİLER artık durum yazısı değiştirmez: kendiliğinden akan bir jenerik açar.
-      Dokununca durur, tekrar dokununca devam eder. Listeyi aşağıdaki CREDITS'ten düzenle.
-    * ÇIKIŞ onay penceresi açar. Onaylarsan oturum kapanır ve giriş ekranı yeniden başlar.
+  v3.0 — ne değişti:
+    * Arka plan artık oyunun kendi ekranı (şeffaf). AYARLAR > "Oyun arka planı"
+      kapatılırsa koyu arka plan gelir.
+    * KREDİLER silindi.
+    * ANA SAYFA: BAŞLAT + SCRIPT HUB düğmeleri.
+    * SCRIPT HUB: loading ekranı açılır, PROBE_URL indirilip çalışır.
+      İndirilemezse / boşsa / hata verirse loading kapanır, menüde kalınır ve
+      "Sistem daha kurulmadı" hatası gösterilir.
+    * Hub: EN YENİ / EN YÜKSEK PUAN / POPÜLER sekmeleri + ID ile arama
+      (her script bir ID ile çağrılır: 1, 2, 3 ... 10000 ...).
+    * CREATE: loading ekranı açılır, CREATE_URL indirilip çalışır; sonra
+      resim, script adı, açıklama, kod formu açılır.
+    * Dil: TÜRKÇE / ENGLISH. İlk açılışta dil seçme ekranı, sonra Ayarlar'dan.
+    * API anahtarı SONRAYA bırakıldı: CONFIG.API_KEY (şimdilik boş).
 
-  BAŞLAT düğmesi neyi çalıştırır?
-    1) getgenv().__LOADSYS.onStart = function(session) ... end   (varsa bu çalışır)
-    2) CONFIG.START_URL doluysa o adresteki script indirilip çalışır
-    Hiçbiri tanımlı değilse menü açık kalır ve nasıl tanımlanacağını söyler.
-
-  Teknik notlar:
-    - Roblox tarzı "kare delik" logo GUI ile çizildi (harici görsel yok).
-    - AnchorPoint her zaman Vector2. GroupTransparency KULLANILMAZ.
-    - Tüm özellik atamaları pcall ile korunur (tek hata menüyü çökertmez).
+  PROBE dosyası (hub arka ucu) şu tabloyu döndürmelidir (hepsi isteğe bağlı):
+    list(sort, page) -> { {id,name,author,rating,uses,image,desc}, ... }
+        sort = "new" | "top" | "popular"
+    get(id)          -> {id,name,author,rating,image,desc,code}   (ID ile çağırma)
+    run(id)          -> scripti çalıştırır (yoksa get(id).code çalıştırılır)
+  CREATE dosyası şu tabloyu döndürmelidir:
+    publish({name,image,desc,code,author,apiKey}) -> ok:boolean, idVeyaMesaj
+        (sunucu yeni script'e sıradaki ID'yi verir)
+  Bu dosyalar S.API_KEY, S.SESSION değerlerini okuyabilir (getgenv().__LOADSYS).
 ]]
 
 local G = (type(getgenv) == "function" and getgenv()) or _G
@@ -32,27 +37,24 @@ G.__LOADSYS = S
 --------------------------------------------------------------
 -- Yapılandırma
 --------------------------------------------------------------
+local BASE = "https://raw.githubusercontent.com/scptr1155-gif/loadsystem/refs/heads/main/"
 local CONFIG = {
-  VERSION       = "2.0.0",
+  VERSION       = "3.0.0",
   REPO          = "scptr1155-gif/loadsystem",
-  START_URL     = "", -- BAŞLAT'ın çalıştıracağı raw script adresi (boş bırakılabilir)
-  RESTART_URL   = "https://raw.githubusercontent.com/scptr1155-gif/loadsystem/refs/heads/main/verify",
+  START_URL     = "",
+  RESTART_URL   = BASE .. "verify",
+  PROBE_URL     = BASE .. "probe",
+  CREATE_URL    = BASE .. "create%20a%20code",
+  API_KEY       = "", -- SONRAYA: script hub'ın dünyaya yayması için API anahtarı buraya
   SETTINGS_FILE = "loadsystem_settings.json",
 }
+S.API_KEY = CONFIG.API_KEY
 
 local ACCENTS = {
-  { name = "Mavi",    color = Color3.fromRGB(88, 101, 242) },
-  { name = "Yeşil",   color = Color3.fromRGB(34, 197, 94) },
-  { name = "Turuncu", color = Color3.fromRGB(249, 115, 22) },
-  { name = "Pembe",   color = Color3.fromRGB(236, 72, 153) },
-  { name = "Camgöbeği", color = Color3.fromRGB(20, 184, 166) },
+  Color3.fromRGB(88, 101, 242), Color3.fromRGB(34, 197, 94), Color3.fromRGB(249, 115, 22),
+  Color3.fromRGB(236, 72, 153), Color3.fromRGB(20, 184, 166),
 }
-
-local SCALES = {
-  { name = "KÜÇÜK",  v = 0.85 },
-  { name = "NORMAL", v = 1.00 },
-  { name = "BÜYÜK",  v = 1.15 },
-}
+local SCALES = { 0.85, 1.00, 1.15 }
 
 --------------------------------------------------------------
 -- Temel yardımcılar
@@ -91,10 +93,7 @@ end
 
 local function delay(t, fn)
   if type(task) == "table" and type(task.delay) == "function" then return task.delay(t, fn) end
-  spawn(function()
-    sleep(t)
-    fn()
-  end)
+  spawn(function() sleep(t) fn() end)
 end
 
 local function attachGui(gui)
@@ -102,42 +101,116 @@ local function attachGui(gui)
     local ok = pcall(function() gui.Parent = CoreGui end)
     if ok and gui.Parent == CoreGui then return true end
   end
-  local ok2 = pcall(function()
+  return pcall(function()
     local lp = Players and Players.LocalPlayer
     if not lp then error("LocalPlayer yok") end
     gui.Parent = lp:WaitForChild("PlayerGui")
   end)
-  return ok2
 end
 
 --------------------------------------------------------------
--- Ayarlar (kalıcı: executor writefile destekliyorsa)
+-- Ayarlar
 --------------------------------------------------------------
-local settings = { accent = 1, scale = 2, anim = true }
+local settings = { accent = 1, scale = 2, anim = true, bg = true, lang = nil }
 local canSave = (type(writefile) == "function")
 
-local function loadSettings()
-  safe(function()
-    if type(isfile) == "function" and type(readfile) == "function" and HttpService and isfile(CONFIG.SETTINGS_FILE) then
-      local data = HttpService:JSONDecode(readfile(CONFIG.SETTINGS_FILE))
-      if type(data) == "table" then
-        if type(data.accent) == "number" and ACCENTS[data.accent] then settings.accent = data.accent end
-        if type(data.scale) == "number" and SCALES[data.scale] then settings.scale = data.scale end
-        if type(data.anim) == "boolean" then settings.anim = data.anim end
-      end
+safe(function()
+  if type(isfile) == "function" and type(readfile) == "function" and HttpService and isfile(CONFIG.SETTINGS_FILE) then
+    local d = HttpService:JSONDecode(readfile(CONFIG.SETTINGS_FILE))
+    if type(d) == "table" then
+      if type(d.accent) == "number" and ACCENTS[d.accent] then settings.accent = d.accent end
+      if type(d.scale) == "number" and SCALES[d.scale] then settings.scale = d.scale end
+      if type(d.anim) == "boolean" then settings.anim = d.anim end
+      if type(d.bg) == "boolean" then settings.bg = d.bg end
+      if d.lang == "tr" or d.lang == "en" then settings.lang = d.lang end
     end
-  end)
-end
+  end
+end)
 
 local function saveSettings()
   safe(function()
-    if canSave and HttpService then
-      writefile(CONFIG.SETTINGS_FILE, HttpService:JSONEncode(settings))
-    end
+    if canSave and HttpService then writefile(CONFIG.SETTINGS_FILE, HttpService:JSONEncode(settings)) end
   end)
 end
 
-loadSettings()
+--------------------------------------------------------------
+-- Diller
+--------------------------------------------------------------
+local STR = {
+  tr = {
+    nav_home = "ANA SAYFA", nav_settings = "AYARLAR", exit = "ÇIKIŞ", online = "Oturum açık",
+    welcome = "Hoş geldin,", f_player = "Oyuncu adı", f_nick = "Takma ad", f_time = "Oturum süresi",
+    f_sys = "Sistem", ready = "Hazır", start = "BAŞLAT", start_d = "Yüklenen scripti çalıştır",
+    hub = "SCRIPT HUB", hub_d = "Scriptleri keşfet ve paylaş",
+    set_title = "Ayarlar", set_saved = "Tercihlerin bu cihazda saklanır.",
+    set_nosave = "Tercihler yalnızca bu oturumda geçerli (executor dosya yazmayı desteklemiyor).",
+    accent = "Vurgu rengi", accent_d = "Düğmelerde ve işaretlerde kullanılan renk",
+    anim = "Animasyonlar", anim_d = "Geçiş ve arka plan hareketleri",
+    bg = "Oyun arka planı", bg_d = "Menünün arkasında oyun ekranı görünsün",
+    size = "Pencere boyutu", size_d = "Menüyü ekranına göre büyüt veya küçült",
+    lang = "Dil", lang_d = "Menü dili",
+    reset = "Varsayılana dön", reset_d = "Renk, animasyon, arka plan ve boyutu sıfırlar", reset_b = "SIFIRLA",
+    reset_ok = "Ayarlar varsayılana döndü.",
+    s_small = "KÜÇÜK", s_normal = "NORMAL", s_large = "BÜYÜK",
+    out_title = "Oturumu kapat", out_desc = "Çıkış yaptığında giriş ekranına dönersin.",
+    cancel = "VAZGEÇ", confirm = "ÇIKIŞ YAP",
+    no_script = "Script tanımlı değil. main-menu içindeki START_URL alanını doldur.",
+    starting = "Script başlatılıyor...", started = "Script başlatıldı.", start_fail = "Başlatılamadı: ",
+    out_ing = "Oturum kapatılıyor...", out_fail = "Giriş ekranı indirilemedi. Bağlantını kontrol edip tekrar dene.",
+    ld_hub = "SCRIPT HUB YÜKLENİYOR", ld_create = "OLUŞTURMA ARAÇLARI YÜKLENİYOR", ld_sub = "LÜTFEN BEKLE",
+    not_ready = "Sistem daha kurulmadı.",
+    hub_title = "Script Hub", hub_sub = "Script bul, çalıştır veya kendin yayınla",
+    create = "CREATE", t_new = "EN YENİ", t_top = "EN YÜKSEK PUAN", t_pop = "POPÜLER",
+    id_ph = "ID (1-10000...)", go = "GİT", run = "ÇALIŞTIR",
+    empty = "Henüz script yok. Hub sistemi daha kurulmadı.", none_found = "Bu ID ile script bulunamadı.",
+    by = "yazar", bad_id = "Geçerli bir ID gir (1, 2, 3...).",
+    run_ok = "Script çalıştırıldı.", run_fail = "Çalıştırılamadı: ",
+    c_title = "Script Oluştur", c_sub = "Scriptini hub'a yayınla; ID ile herkes çağırabilsin",
+    f_name = "Script adı", f_image = "Resim ID (rbxassetid)", f_desc = "Açıklama", f_code = "Script kodu (Lua)",
+    publish = "YAYINLA", bad_name = "Script adı 3-40 karakter olmalı.", bad_code = "Script kodu boş olamaz.",
+    pub_ok = "Yayınlandı! Script ID: ", pub_fail = "Yayınlanamadı: ", pub_ing = "Yayınlanıyor...",
+    pick = "Dil seç  /  Select language",
+  },
+  en = {
+    nav_home = "HOME", nav_settings = "SETTINGS", exit = "EXIT", online = "Signed in",
+    welcome = "Welcome,", f_player = "Player name", f_nick = "Nickname", f_time = "Session time",
+    f_sys = "System", ready = "Ready", start = "START", start_d = "Run the loaded script",
+    hub = "SCRIPT HUB", hub_d = "Discover and share scripts",
+    set_title = "Settings", set_saved = "Your preferences are saved on this device.",
+    set_nosave = "Preferences last only for this session (executor has no file writing).",
+    accent = "Accent color", accent_d = "Color used on buttons and highlights",
+    anim = "Animations", anim_d = "Transition and background motion",
+    bg = "Game background", bg_d = "Show the game screen behind the menu",
+    size = "Window size", size_d = "Scale the menu to fit your screen",
+    lang = "Language", lang_d = "Menu language",
+    reset = "Reset to default", reset_d = "Resets color, animation, background and size", reset_b = "RESET",
+    reset_ok = "Settings were reset.",
+    s_small = "SMALL", s_normal = "NORMAL", s_large = "LARGE",
+    out_title = "Sign out", out_desc = "When you sign out you return to the login screen.",
+    cancel = "CANCEL", confirm = "SIGN OUT",
+    no_script = "No script set. Fill in START_URL inside main-menu.",
+    starting = "Starting script...", started = "Script started.", start_fail = "Could not start: ",
+    out_ing = "Signing out...", out_fail = "Could not download the login screen. Check your connection and try again.",
+    ld_hub = "LOADING SCRIPT HUB", ld_create = "LOADING CREATE TOOLS", ld_sub = "PLEASE WAIT",
+    not_ready = "The system is not set up yet.",
+    hub_title = "Script Hub", hub_sub = "Find, run or publish scripts",
+    create = "CREATE", t_new = "NEWEST", t_top = "TOP RATED", t_pop = "POPULAR",
+    id_ph = "ID (1-10000...)", go = "GO", run = "RUN",
+    empty = "No scripts yet. The hub system is not set up yet.", none_found = "No script found with that ID.",
+    by = "by", bad_id = "Enter a valid ID (1, 2, 3...).",
+    run_ok = "Script executed.", run_fail = "Could not run: ",
+    c_title = "Create Script", c_sub = "Publish your script to the hub; anyone can call it by ID",
+    f_name = "Script name", f_image = "Image ID (rbxassetid)", f_desc = "Description", f_code = "Script code (Lua)",
+    publish = "PUBLISH", bad_name = "Script name must be 3-40 characters.", bad_code = "Script code cannot be empty.",
+    pub_ok = "Published! Script ID: ", pub_fail = "Could not publish: ", pub_ing = "Publishing...",
+    pick = "Dil seç  /  Select language",
+  },
+}
+
+local function T(k)
+  local l = STR[settings.lang or "tr"] or STR.tr
+  return l[k] or STR.tr[k] or k
+end
 
 --------------------------------------------------------------
 -- Oturum bilgileri
@@ -149,54 +222,24 @@ local loginTime = tonumber(session.time) or os.time()
 local initials  = string.upper(string.sub(nick, 1, 2))
 
 --------------------------------------------------------------
--- Krediler (jenerik). Satır türleri:
---   { "title", metin }   { "sub", metin }   { "gap", yükseklik }
---   { "role", başlık, isim }   { "note", metin }
---------------------------------------------------------------
-local CREDITS = {
-  { "title", "LOADSYSTEM" },
-  { "sub",   "Sürüm " .. CONFIG.VERSION },
-  { "gap",   36 },
-  { "role",  "Geliştirici", "scptr1155-gif" },
-  { "role",  "Giriş sistemi", "verify" },
-  { "role",  "Giriş ekranı", "verify-gui" },
-  { "role",  "Ana menü", "main-menu" },
-  { "role",  "Altyapı", "GitHub ve Luau" },
-  { "gap",   18 },
-  { "role",  "Oyuncu", pname },
-  { "role",  "Takma ad", nick },
-  { "gap",   18 },
-  { "note",  "Sistemi kullandığın için teşekkürler." },
-  { "gap",   8 },
-  { "sub",   CONFIG.REPO },
-}
-
---------------------------------------------------------------
--- Renkler ve yazı tipleri
+-- Renkler / yazı tipleri
 --------------------------------------------------------------
 local C = {
-  bg       = Color3.fromRGB(9, 10, 14),
-  bgTop    = Color3.fromRGB(19, 21, 31),
-  side     = Color3.fromRGB(16, 18, 24),
-  panel    = Color3.fromRGB(13, 15, 20),
-  card     = Color3.fromRGB(22, 25, 33),
-  cardHi   = Color3.fromRGB(31, 35, 46),
-  line     = Color3.fromRGB(38, 42, 53),
-  text     = Color3.fromRGB(240, 242, 247),
-  muted    = Color3.fromRGB(144, 149, 165),
-  faint    = Color3.fromRGB(98, 103, 120),
-  ok       = Color3.fromRGB(34, 197, 94),
-  danger   = Color3.fromRGB(239, 68, 68),
-  dangerBg = Color3.fromRGB(44, 24, 29),
-  white    = Color3.fromRGB(255, 255, 255),
+  bg = Color3.fromRGB(9, 10, 14), bgTop = Color3.fromRGB(19, 21, 31),
+  side = Color3.fromRGB(16, 18, 24), panel = Color3.fromRGB(13, 15, 20),
+  card = Color3.fromRGB(22, 25, 33), cardHi = Color3.fromRGB(31, 35, 46),
+  line = Color3.fromRGB(38, 42, 53), text = Color3.fromRGB(240, 242, 247),
+  muted = Color3.fromRGB(144, 149, 165), faint = Color3.fromRGB(98, 103, 120),
+  ok = Color3.fromRGB(34, 197, 94), danger = Color3.fromRGB(239, 68, 68),
+  dangerBg = Color3.fromRGB(44, 24, 29), white = Color3.fromRGB(255, 255, 255),
+  gold = Color3.fromRGB(250, 204, 21),
 }
-
 local F = { reg = Enum.Font.Gotham, med = Enum.Font.GothamMedium, bold = Enum.Font.GothamBold }
 local AL, AC, AR = Enum.TextXAlignment.Left, Enum.TextXAlignment.Center, Enum.TextXAlignment.Right
 
-local accent   = ACCENTS[settings.accent].color
+local accent   = ACCENTS[settings.accent]
 local accentHi = accent:Lerp(Color3.new(1, 1, 1), 0.18)
-local accentObjs = {}
+local accentObjs, langObjs, langFns = {}, {}, {}
 
 --------------------------------------------------------------
 -- GUI yardımcıları
@@ -205,77 +248,61 @@ local function new(class, props, parent)
   local ok, o = pcall(function() return Instance.new(class) end)
   if not ok or not o then return nil end
   if props then
-    for k, v in pairs(props) do
-      safe(function() o[k] = v end)
-    end
+    for k, v in pairs(props) do safe(function() o[k] = v end) end
   end
   if parent then safe(function() o.Parent = parent end) end
   return o
 end
 
-local function round(obj, r, isScale)
-  if not obj then return end
-  new("UICorner", { CornerRadius = isScale and UDim.new(r, 0) or UDim.new(0, r or 12) }, obj)
+local function round(obj, r)
+  if obj then new("UICorner", { CornerRadius = UDim.new(0, r or 12) }, obj) end
 end
 
-local function stroke(obj, color, thickness)
+local function stroke(obj, color, th)
   if not obj then return nil end
-  return new("UIStroke", {
-    ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
-    Color = color,
-    Thickness = thickness or 1,
-  }, obj)
+  return new("UIStroke", { ApplyStrokeMode = Enum.ApplyStrokeMode.Border, Color = color, Thickness = th or 1 }, obj)
 end
 
 local function applyGoal(obj, goal)
   if not obj or type(goal) ~= "table" then return end
-  for k, v in pairs(goal) do
-    safe(function() obj[k] = v end)
-  end
+  for k, v in pairs(goal) do safe(function() obj[k] = v end) end
 end
 
--- Animasyonlar kapalıysa (ayarlardan) değerler anında uygulanır
 local function tw(obj, goal, time, delayT, style, dir)
   if not obj then return nil end
-  if not TweenService or not settings.anim then
-    applyGoal(obj, goal)
-    return nil
-  end
+  if not TweenService or not settings.anim then applyGoal(obj, goal) return nil end
   local ok, t = pcall(function()
-    return TweenService:Create(
-      obj,
-      TweenInfo.new(time or 0.2, style or Enum.EasingStyle.Quad, dir or Enum.EasingDirection.Out, 0, false, delayT or 0),
-      goal
-    )
+    return TweenService:Create(obj,
+      TweenInfo.new(time or 0.2, style or Enum.EasingStyle.Quad, dir or Enum.EasingDirection.Out, 0, false, delayT or 0), goal)
   end)
-  if ok and t then
-    local played = pcall(function() t:Play() end)
-    if played then return t end
-  end
+  if ok and t and pcall(function() t:Play() end) then return t end
   applyGoal(obj, goal)
   return nil
 end
 
 local function label(parent, text, x, y, w, h, size, font, color, align, extra)
   local props = {
-    Size = UDim2.fromOffset(w, h),
-    Position = UDim2.fromOffset(x, y),
-    BackgroundTransparency = 1,
-    Text = text,
-    TextColor3 = color,
-    TextSize = size,
-    Font = font,
-    TextXAlignment = align or AL,
-    TextYAlignment = Enum.TextYAlignment.Center,
-    ZIndex = 3,
+    Size = UDim2.fromOffset(w, h), Position = UDim2.fromOffset(x, y),
+    BackgroundTransparency = 1, Text = text, TextColor3 = color, TextSize = size, Font = font,
+    TextXAlignment = align or AL, TextYAlignment = Enum.TextYAlignment.Center, ZIndex = 3,
   }
-  if extra then
-    for k, v in pairs(extra) do props[k] = v end
-  end
+  if extra then for k, v in pairs(extra) do props[k] = v end end
   return new("TextLabel", props, parent)
 end
 
--- Vurgu rengini kullanan nesneleri kaydet (renk değişince hepsi güncellenir)
+-- Dile bağlı yazı: dil değişince otomatik güncellenir
+local function regText(obj, key, prop)
+  if obj then
+    langObjs[#langObjs + 1] = { obj = obj, key = key, prop = prop or "Text" }
+    safe(function() obj[prop or "Text"] = T(key) end)
+  end
+  return obj
+end
+
+local function tl(parent, key, x, y, w, h, size, font, color, align, extra)
+  return regText(label(parent, "", x, y, w, h, size, font, color, align, extra), key)
+end
+
 local function useAccent(obj, prop)
   if not obj then return end
   prop = prop or "BackgroundColor3"
@@ -283,45 +310,57 @@ local function useAccent(obj, prop)
   safe(function() obj[prop] = accent end)
 end
 
--- Ayar ekranından çağrılan yenileme fonksiyonları (build içinde atanır)
-local refreshNav, refreshSwatches, refreshToggle, refreshScale
+local refreshNav, refreshSwatches, refreshToggle, refreshScale, refreshLang2, refreshBgToggle, refreshTabs
 
 local function setAccent(idx)
   if not ACCENTS[idx] then return end
   settings.accent = idx
-  accent = ACCENTS[idx].color
+  accent = ACCENTS[idx]
   accentHi = accent:Lerp(Color3.new(1, 1, 1), 0.18)
   for _, r in ipairs(accentObjs) do
     local has = false
     safe(function() has = (r.obj.Parent ~= nil) end)
     if has then tw(r.obj, { [r.prop] = accent }, 0.25) end
   end
-  if refreshNav then refreshNav() end
-  if refreshSwatches then refreshSwatches() end
-  if refreshToggle then refreshToggle() end
-  if refreshScale then refreshScale() end
+  for _, f in ipairs({ refreshNav, refreshSwatches, refreshToggle, refreshBgToggle, refreshScale, refreshLang2, refreshTabs }) do
+    if f then f() end
+  end
 end
 
 local function fmtTime(sec)
   if sec < 0 then sec = 0 end
-  local h = math.floor(sec / 3600)
-  local m = math.floor((sec % 3600) / 60)
-  local s = math.floor(sec % 60)
+  local h, m, s = math.floor(sec / 3600), math.floor((sec % 3600) / 60), math.floor(sec % 60)
   if h > 0 then return string.format("%d:%02d:%02d", h, m, s) end
   return string.format("%02d:%02d", m, s)
 end
+
+local function trim(s) return ((tostring(s or "")):match("^%s*(.-)%s*$")) end
 
 -- Önceki menü açıksa kapat
 safe(function()
   local prev = S.MAIN
   if type(prev) == "table" then
-    if type(prev.destroy) == "function" then
-      prev.destroy()
-    elseif type(prev.menu) == "table" and type(prev.menu.destroy) == "function" then
-      prev.menu.destroy()
-    end
+    if type(prev.destroy) == "function" then prev.destroy()
+    elseif type(prev.menu) == "table" and type(prev.menu.destroy) == "function" then prev.menu.destroy() end
   end
 end)
+
+--------------------------------------------------------------
+-- Uzak dosya indir + çalıştır (boş / hata = başarısız)
+--------------------------------------------------------------
+local function fetchLoad(url)
+  local sep = url:find("?", 1, true) and "&" or "?"
+  local okF, src = pcall(function() return game:HttpGet(url .. sep .. "t=" .. tostring(os.time())) end)
+  if not okF or type(src) ~= "string" then return false, "indirilemedi" end
+  if #((src:gsub("%s+", ""))) == 0 then return false, "bos dosya" end
+  if src:sub(1, 14) == "404: Not Found" then return false, "404" end
+  if type(loadstring) ~= "function" then return false, "loadstring yok" end
+  local fn, cerr = loadstring(src)
+  if not fn then return false, tostring(cerr) end
+  local okR, mod = pcall(fn)
+  if not okR then return false, tostring(mod) end
+  return true, mod
+end
 
 --------------------------------------------------------------
 -- Arayüz
@@ -335,103 +374,39 @@ local function build()
   end)
 
   local gui = new("ScreenGui", {
-    Name = "LoadSystemMainMenu",
-    ResetOnSpawn = false,
-    IgnoreGuiInset = true,
-    DisplayOrder = 800,
-    ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+    Name = "LoadSystemMainMenu", ResetOnSpawn = false, IgnoreGuiInset = true,
+    DisplayOrder = 800, ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
   })
   if not gui then return nil end
   attachGui(gui)
 
-  local conns = {}
-  local alive = true
-  local closing = false
-  local current = 0
-  local ambientTweens = {}
+  local conns, ambientTweens = {}, {}
+  local alive, closing, current = true, false, 0
   local goTo, toast, openModal, closeModal, startScript, doLogout, closeMenu
+  local showLoading, hideLoading, ensureModule, refreshHub, openCreate
 
-  local WIN_W, WIN_H = 880, 520
-  local SIDE_W = 224
-  local CW = WIN_W - SIDE_W - 12   -- içerik paneli genişliği (644)
+  local WIN_W, WIN_H, SIDE_W = 880, 520, 224
+  local CW = WIN_W - SIDE_W - 12
   local PAD = 36
-  local IW = CW - PAD * 2          -- içerik iç genişliği (572)
+  local IW = CW - PAD * 2
 
-  ------------------------------------------------------------
-  -- Arka plan
-  ------------------------------------------------------------
+  -- Arka plan: şeffaf = oyun ekranı görünür
   local bg = new("Frame", {
-    Name = "Backdrop",
-    Size = UDim2.fromScale(1, 1),
-    BackgroundColor3 = C.bg,
-    BorderSizePixel = 0,
-    ZIndex = 0,
+    Name = "Backdrop", Size = UDim2.fromScale(1, 1), BackgroundColor3 = C.bg,
+    BackgroundTransparency = settings.bg and 1 or 0, BorderSizePixel = 0, ZIndex = 0,
   }, gui)
-  local bgGradient = new("UIGradient", {
-    Color = ColorSequence.new(C.bgTop, C.bg),
-    Rotation = 150,
-  }, bg)
+  local bgGradient = new("UIGradient", { Color = ColorSequence.new(C.bgTop, C.bg), Rotation = 150 }, bg)
+  safe(function()
+    local t = TweenService:Create(bgGradient,
+      TweenInfo.new(24, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), { Rotation = 230 })
+    t:Play()
+    ambientTweens[#ambientTweens + 1] = t
+  end)
 
-  local ambient = new("Frame", {
-    Name = "Ambient",
-    Size = UDim2.fromScale(1, 1),
-    BackgroundTransparency = 1,
-    ClipsDescendants = true,
-    ZIndex = 1,
-  }, bg)
-
-  local function addAmbientTween(obj, info, goal)
-    if not TweenService then return end
-    safe(function()
-      local t = TweenService:Create(obj, info, goal)
-      t:Play()
-      ambientTweens[#ambientTweens + 1] = t
-    end)
-  end
-
-  -- Yumuşak ışık: iç içe şeffaf daireler
-  local function makeGlow(px, py, size, dx, dy, dur)
-    local holder = new("Frame", {
-      Size = UDim2.fromOffset(size, size),
-      AnchorPoint = Vector2.new(0.5, 0.5),
-      Position = UDim2.fromScale(px, py),
-      BackgroundTransparency = 1,
-      ZIndex = 1,
-    }, ambient)
-    for i = 0, 5 do
-      local d = size * (1 - i * 0.15)
-      local ring = new("Frame", {
-        Size = UDim2.fromOffset(d, d),
-        AnchorPoint = Vector2.new(0.5, 0.5),
-        Position = UDim2.fromScale(0.5, 0.5),
-        BackgroundTransparency = 0.96,
-        BorderSizePixel = 0,
-        ZIndex = 1,
-      }, holder)
-      round(ring, 0.5, true)
-      useAccent(ring, "BackgroundColor3")
-    end
-    addAmbientTween(holder,
-      TweenInfo.new(dur, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
-      { Position = UDim2.fromScale(px + dx, py + dy) })
-  end
-
-  makeGlow(0.10, 0.16, 560, 0.05, 0.06, 11)
-  makeGlow(0.92, 0.90, 500, -0.05, -0.05, 13)
-  addAmbientTween(bgGradient,
-    TweenInfo.new(24, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
-    { Rotation = 230 })
-
-  ------------------------------------------------------------
-  -- Pencere + otomatik ölçek
-  ------------------------------------------------------------
+  -- Pencere + ölçek
   local window = new("Frame", {
-    Name = "Window",
-    Size = UDim2.fromOffset(WIN_W, WIN_H),
-    AnchorPoint = Vector2.new(0.5, 0.5),
-    Position = UDim2.fromScale(0.5, 0.5),
-    BackgroundTransparency = 1,
-    ZIndex = 2,
+    Name = "Window", Size = UDim2.fromOffset(WIN_W, WIN_H), AnchorPoint = Vector2.new(0.5, 0.5),
+    Position = UDim2.fromScale(0.5, 0.5), BackgroundTransparency = 1, ZIndex = 2,
   }, bg)
   local uiScale = new("UIScale", { Scale = 1 }, window)
 
@@ -443,26 +418,19 @@ local function build()
     end)
     local fit = math.min((vp.X - 24) / WIN_W, (vp.Y - 24) / WIN_H)
     if fit <= 0 then fit = 1 end
-    local mult = (SCALES[settings.scale] and SCALES[settings.scale].v) or 1
-    local s = math.min(fit, math.min(fit, 1) * mult)
-    return math.max(0.35, s)
+    local mult = SCALES[settings.scale] or 1
+    return math.max(0.35, math.min(fit, math.min(fit, 1) * mult))
   end
 
   local function fitWindow(animated)
     local s = computeScale()
-    if animated then
-      tw(uiScale, { Scale = s }, 0.25)
-    else
-      safe(function() uiScale.Scale = s end)
-    end
+    if animated then tw(uiScale, { Scale = s }, 0.25) else safe(function() uiScale.Scale = s end) end
   end
 
   safe(function()
     local cam = Workspace and Workspace.CurrentCamera
     if cam then
-      conns[#conns + 1] = cam:GetPropertyChangedSignal("ViewportSize"):Connect(function()
-        fitWindow(true)
-      end)
+      conns[#conns + 1] = cam:GetPropertyChangedSignal("ViewportSize"):Connect(function() fitWindow(true) end)
     end
   end)
 
@@ -470,176 +438,118 @@ local function build()
   -- Sol menü
   ------------------------------------------------------------
   local sidebar = new("Frame", {
-    Name = "Sidebar",
-    Size = UDim2.fromOffset(SIDE_W, WIN_H),
-    BackgroundColor3 = C.side,
-    BorderSizePixel = 0,
-    ZIndex = 2,
+    Name = "Sidebar", Size = UDim2.fromOffset(SIDE_W, WIN_H), BackgroundColor3 = C.side, BorderSizePixel = 0, ZIndex = 2,
   }, window)
   round(sidebar, 18)
   stroke(sidebar, C.line, 1)
 
   local logo = new("Frame", {
-    Size = UDim2.fromOffset(36, 36),
-    Position = UDim2.fromOffset(24, 26),
-    BackgroundColor3 = C.white,
-    BorderSizePixel = 0,
-    Rotation = -8,
-    ZIndex = 3,
+    Size = UDim2.fromOffset(36, 36), Position = UDim2.fromOffset(24, 26),
+    BackgroundColor3 = C.white, BorderSizePixel = 0, Rotation = -8, ZIndex = 3,
   }, sidebar)
   round(logo, 8)
   local hole = new("Frame", {
-    Size = UDim2.fromOffset(13, 13),
-    Position = UDim2.fromOffset(11, 11),
-    BackgroundColor3 = C.side,
-    BorderSizePixel = 0,
-    ZIndex = 4,
+    Size = UDim2.fromOffset(13, 13), Position = UDim2.fromOffset(11, 11),
+    BackgroundColor3 = C.side, BorderSizePixel = 0, ZIndex = 4,
   }, logo)
   round(hole, 3)
-
   label(sidebar, "LOADSYSTEM", 72, 24, 140, 18, 14, F.bold, C.text)
   label(sidebar, "v" .. CONFIG.VERSION, 72, 43, 140, 14, 11, F.reg, C.faint)
 
-  local NAV_Y = { 100, 150, 200 }
-  local NAV_TEXT = { "ANA SAYFA", "AYARLAR", "KREDİLER" }
+  local NAV_Y = { 100, 150 }
+  local NAV_KEY = { "nav_home", "nav_settings" }
   local navButtons = {}
 
   local indicator = new("Frame", {
-    Size = UDim2.fromOffset(3, 22),
-    Position = UDim2.fromOffset(0, NAV_Y[1] + 10),
-    BorderSizePixel = 0,
-    ZIndex = 5,
+    Size = UDim2.fromOffset(3, 22), Position = UDim2.fromOffset(0, NAV_Y[1] + 10), BorderSizePixel = 0, ZIndex = 5,
   }, sidebar)
   round(indicator, 2)
   useAccent(indicator, "BackgroundColor3")
 
-  local function makeNav(idx)
+  local function navIndex(idx) return (idx == 2) and 2 or 1 end -- 1,3,4 -> ANA SAYFA grubu
+
+  for i = 1, 2 do
     local b = new("TextButton", {
-      Size = UDim2.fromOffset(192, 42),
-      Position = UDim2.fromOffset(16, NAV_Y[idx]),
-      BackgroundColor3 = C.cardHi,
-      BackgroundTransparency = 1,
-      BorderSizePixel = 0,
-      Text = "",
-      AutoButtonColor = false,
-      ZIndex = 3,
+      Size = UDim2.fromOffset(192, 42), Position = UDim2.fromOffset(16, NAV_Y[i]),
+      BackgroundColor3 = C.cardHi, BackgroundTransparency = 1, BorderSizePixel = 0,
+      Text = "", AutoButtonColor = false, ZIndex = 3,
     }, sidebar)
     round(b, 12)
-    local txt = label(b, NAV_TEXT[idx], 18, 0, 150, 42, 13, F.bold, C.muted, AL, { ZIndex = 4 })
-    navButtons[idx] = { btn = b, txt = txt }
-
-    b.MouseEnter:Connect(function()
-      if idx ~= current then tw(b, { BackgroundTransparency = 0.6 }, 0.12) end
-    end)
-    b.MouseLeave:Connect(function()
-      if idx ~= current then tw(b, { BackgroundTransparency = 1 }, 0.12) end
-    end)
-    b.MouseButton1Click:Connect(function()
-      if goTo then goTo(idx) end
-    end)
+    local txt = tl(b, NAV_KEY[i], 18, 0, 150, 42, 13, F.bold, C.muted, AL, { ZIndex = 4 })
+    navButtons[i] = { btn = b, txt = txt }
+    b.MouseEnter:Connect(function() if i ~= navIndex(current) then tw(b, { BackgroundTransparency = 0.6 }, 0.12) end end)
+    b.MouseLeave:Connect(function() if i ~= navIndex(current) then tw(b, { BackgroundTransparency = 1 }, 0.12) end end)
+    b.MouseButton1Click:Connect(function() if goTo then goTo(i == 1 and 1 or 2) end end)
   end
-  for i = 1, 3 do makeNav(i) end
 
   refreshNav = function()
     for i, nb in ipairs(navButtons) do
-      local active = (i == current)
+      local active = (i == navIndex(current))
       tw(nb.btn, { BackgroundTransparency = active and 0 or 1 }, 0.2)
       tw(nb.txt, { TextColor3 = active and C.text or C.muted }, 0.2)
     end
   end
 
-  -- Çıkış düğmesi
   local exitBtn = new("TextButton", {
-    Size = UDim2.fromOffset(192, 42),
-    Position = UDim2.fromOffset(16, 398),
-    BackgroundColor3 = C.card,
-    BorderSizePixel = 0,
-    Text = "",
-    AutoButtonColor = false,
-    ZIndex = 3,
+    Size = UDim2.fromOffset(192, 42), Position = UDim2.fromOffset(16, 398),
+    BackgroundColor3 = C.card, BorderSizePixel = 0, Text = "", AutoButtonColor = false, ZIndex = 3,
   }, sidebar)
   round(exitBtn, 12)
   stroke(exitBtn, C.line, 1)
   local exitDot = new("Frame", {
-    Size = UDim2.fromOffset(8, 8),
-    Position = UDim2.fromOffset(18, 17),
-    BackgroundColor3 = C.danger,
-    BorderSizePixel = 0,
-    ZIndex = 4,
+    Size = UDim2.fromOffset(8, 8), Position = UDim2.fromOffset(18, 17), BackgroundColor3 = C.danger, BorderSizePixel = 0, ZIndex = 4,
   }, exitBtn)
   round(exitDot, 4)
-  label(exitBtn, "ÇIKIŞ", 38, 0, 130, 42, 13, F.bold, C.danger, AL, { ZIndex = 4 })
+  tl(exitBtn, "exit", 38, 0, 130, 42, 13, F.bold, C.danger, AL, { ZIndex = 4 })
   exitBtn.MouseEnter:Connect(function() tw(exitBtn, { BackgroundColor3 = C.dangerBg }, 0.15) end)
   exitBtn.MouseLeave:Connect(function() tw(exitBtn, { BackgroundColor3 = C.card }, 0.15) end)
-  exitBtn.MouseButton1Click:Connect(function()
-    if openModal then openModal() end
-  end)
+  exitBtn.MouseButton1Click:Connect(function() if openModal then openModal() end end)
 
-  -- Kullanıcı kartı
   local chip = new("Frame", {
-    Size = UDim2.fromOffset(192, 56),
-    Position = UDim2.fromOffset(16, 450),
-    BackgroundColor3 = C.card,
-    BorderSizePixel = 0,
-    ZIndex = 3,
+    Size = UDim2.fromOffset(192, 56), Position = UDim2.fromOffset(16, 450), BackgroundColor3 = C.card, BorderSizePixel = 0, ZIndex = 3,
   }, sidebar)
   round(chip, 14)
   stroke(chip, C.line, 1)
-
   local avatar = new("Frame", {
-    Size = UDim2.fromOffset(34, 34),
-    Position = UDim2.fromOffset(11, 11),
-    BorderSizePixel = 0,
-    ZIndex = 4,
+    Size = UDim2.fromOffset(34, 34), Position = UDim2.fromOffset(11, 11), BorderSizePixel = 0, ZIndex = 4,
   }, chip)
   round(avatar, 17)
   useAccent(avatar, "BackgroundColor3")
   label(avatar, initials, 0, 0, 34, 34, 12, F.bold, C.white, AC, { Size = UDim2.fromScale(1, 1), ZIndex = 5 })
-
   label(chip, nick, 54, 10, 128, 18, 12, F.bold, C.text, AL, { ZIndex = 4, TextTruncate = Enum.TextTruncate.AtEnd })
   local chipDot = new("Frame", {
-    Size = UDim2.fromOffset(7, 7),
-    Position = UDim2.fromOffset(54, 34),
-    BackgroundColor3 = C.ok,
-    BorderSizePixel = 0,
-    ZIndex = 4,
+    Size = UDim2.fromOffset(7, 7), Position = UDim2.fromOffset(54, 34), BackgroundColor3 = C.ok, BorderSizePixel = 0, ZIndex = 4,
   }, chip)
   round(chipDot, 4)
-  label(chip, "Oturum açık", 66, 29, 110, 16, 10, F.med, C.ok, AL, { ZIndex = 4 })
-  addAmbientTween(chipDot,
-    TweenInfo.new(1.2, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
-    { BackgroundTransparency = 0.7 })
+  tl(chip, "online", 66, 29, 110, 16, 10, F.med, C.ok, AL, { ZIndex = 4 })
+  safe(function()
+    local t = TweenService:Create(chipDot,
+      TweenInfo.new(1.2, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), { BackgroundTransparency = 0.7 })
+    t:Play()
+    ambientTweens[#ambientTweens + 1] = t
+  end)
 
   ------------------------------------------------------------
-  -- İçerik paneli + sayfalar
+  -- İçerik paneli + sayfalar (1 ana, 2 ayarlar, 3 hub, 4 create)
   ------------------------------------------------------------
   local content = new("Frame", {
-    Name = "Content",
-    Size = UDim2.fromOffset(CW, WIN_H),
-    Position = UDim2.fromOffset(SIDE_W + 12, 0),
-    BackgroundColor3 = C.panel,
-    BorderSizePixel = 0,
-    ClipsDescendants = true,
-    ZIndex = 2,
+    Name = "Content", Size = UDim2.fromOffset(CW, WIN_H), Position = UDim2.fromOffset(SIDE_W + 12, 0),
+    BackgroundColor3 = C.panel, BorderSizePixel = 0, ClipsDescendants = true, ZIndex = 2,
   }, window)
   round(content, 18)
   stroke(content, C.line, 1)
 
   local pages = {}
-  for i = 1, 3 do
+  for i = 1, 4 do
     pages[i] = new("Frame", {
-      Name = "Page" .. i,
-      Size = UDim2.fromOffset(CW, WIN_H),
-      Position = UDim2.fromOffset(0, 0),
-      BackgroundTransparency = 1,
-      Visible = false,
-      ZIndex = 2,
+      Name = "Page" .. i, Size = UDim2.fromOffset(CW, WIN_H), Position = UDim2.fromOffset(0, 0),
+      BackgroundTransparency = 1, Visible = false, ZIndex = 2,
     }, content)
   end
 
-  local function pageHeader(parent, title, subtitle)
-    label(parent, title, PAD, 30, IW, 30, 22, F.bold, C.text)
-    if subtitle then label(parent, subtitle, PAD, 62, IW, 16, 12, F.reg, C.muted) end
+  local function pageHeader(parent, tKey, sKey)
+    tl(parent, tKey, PAD, 30, IW - 150, 30, 22, F.bold, C.text)
+    if sKey then tl(parent, sKey, PAD, 62, IW - 150, 16, 12, F.reg, C.muted) end
   end
 
   local function riseIn(obj, delayT)
@@ -649,63 +559,55 @@ local function build()
     tw(obj, { Position = p }, 0.55, delayT or 0, Enum.EasingStyle.Quint)
   end
 
+  local function actionButton(parent, x, y, w, h, key, subKey)
+    local b = new("TextButton", {
+      Size = UDim2.fromOffset(w, h), Position = UDim2.fromOffset(x, y), BorderSizePixel = 0,
+      Text = "", AutoButtonColor = false, ZIndex = 3,
+    }, parent)
+    round(b, 16)
+    useAccent(b, "BackgroundColor3")
+    tl(b, key, 22, 14, w - 30, 24, 17, F.bold, C.white, AL, { ZIndex = 4 })
+    if subKey then tl(b, subKey, 22, 38, w - 30, 18, 12, F.reg, Color3.fromRGB(228, 232, 255), AL, { ZIndex = 4 }) end
+    b.MouseEnter:Connect(function() tw(b, { BackgroundColor3 = accentHi }, 0.15) end)
+    b.MouseLeave:Connect(function() tw(b, { BackgroundColor3 = accent }, 0.15) end)
+    return b
+  end
+
   ------------------------------------------------------------
   -- Sayfa 1: ANA SAYFA
   ------------------------------------------------------------
   local home = pages[1]
-  label(home, "Hoş geldin,", PAD, 34, 300, 16, 13, F.med, C.muted)
+  tl(home, "welcome", PAD, 34, 300, 16, 13, F.med, C.muted)
   local hello = label(home, nick, PAD, 54, IW, 52, 40, F.bold, C.text, AL, { TextTruncate = Enum.TextTruncate.AtEnd })
   local homeBar = new("Frame", {
-    Size = UDim2.fromOffset(56, 4),
-    Position = UDim2.fromOffset(PAD, 114),
-    BorderSizePixel = 0,
-    ZIndex = 3,
+    Size = UDim2.fromOffset(56, 4), Position = UDim2.fromOffset(PAD, 114), BorderSizePixel = 0, ZIndex = 3,
   }, home)
   round(homeBar, 2)
   useAccent(homeBar, "BackgroundColor3")
 
-  local function factRow(y, name, value, color)
-    label(home, name, PAD, y, 200, 40, 12, F.reg, C.faint)
+  local function factRow(y, key, value, color)
+    tl(home, key, PAD, y, 200, 40, 12, F.reg, C.faint)
     local v = label(home, value, PAD + 200, y, IW - 200, 40, 13, F.med, color or C.text, AL, { TextTruncate = Enum.TextTruncate.AtEnd })
     new("Frame", {
-      Size = UDim2.fromOffset(IW, 1),
-      Position = UDim2.fromOffset(PAD, y + 40),
-      BackgroundColor3 = C.line,
-      BorderSizePixel = 0,
-      ZIndex = 2,
+      Size = UDim2.fromOffset(IW, 1), Position = UDim2.fromOffset(PAD, y + 40), BackgroundColor3 = C.line, BorderSizePixel = 0, ZIndex = 2,
     }, home)
     return v
   end
 
   local factsTop = 148
-  factRow(factsTop, "Oyuncu adı", pname)
-  local nickVal = factRow(factsTop + 40, "Takma ad", nick)
+  factRow(factsTop, "f_player", pname)
+  local nickVal = factRow(factsTop + 40, "f_nick", nick)
   useAccent(nickVal, "TextColor3")
-  local timeVal = factRow(factsTop + 80, "Oturum süresi", fmtTime(os.time() - loginTime))
-  factRow(factsTop + 120, "Sistem", "Hazır", C.ok)
+  local timeVal = factRow(factsTop + 80, "f_time", fmtTime(os.time() - loginTime))
+  local sysVal = factRow(factsTop + 120, "f_sys", "", C.ok)
+  regText(sysVal, "ready")
 
-  local startBtn = new("TextButton", {
-    Name = "Start",
-    Size = UDim2.fromOffset(IW, 70),
-    Position = UDim2.fromOffset(PAD, 336),
-    BorderSizePixel = 0,
-    Text = "",
-    AutoButtonColor = false,
-    ZIndex = 3,
-  }, home)
-  round(startBtn, 16)
-  useAccent(startBtn, "BackgroundColor3")
-  label(startBtn, "BAŞLAT", 26, 14, 300, 24, 17, F.bold, C.white, AL, { ZIndex = 4 })
-  label(startBtn, "Yüklenen scripti çalıştır", 26, 38, 300, 18, 12, F.reg, Color3.fromRGB(228, 232, 255), AL, { ZIndex = 4 })
-  startBtn.MouseEnter:Connect(function() tw(startBtn, { BackgroundColor3 = accentHi }, 0.15) end)
-  startBtn.MouseLeave:Connect(function() tw(startBtn, { BackgroundColor3 = accent }, 0.15) end)
-  startBtn.MouseButton1Click:Connect(function()
-    if startScript then startScript() end
-  end)
-
+  local BW = math.floor((IW - 12) / 2)
+  local startBtn = actionButton(home, PAD, 336, BW, 70, "start", "start_d")
+  startBtn.MouseButton1Click:Connect(function() if startScript then startScript() end end)
+  local hubBtn = actionButton(home, PAD + BW + 12, 336, BW, 70, "hub", "hub_d")
   label(home, CONFIG.REPO, PAD, 474, IW, 16, 11, F.reg, C.faint)
 
-  -- Oturum süresi canlı güncellenir
   spawn(function()
     while alive do
       safe(function() timeVal.Text = fmtTime(os.time() - loginTime) end)
@@ -716,135 +618,106 @@ local function build()
   ------------------------------------------------------------
   -- Sayfa 2: AYARLAR
   ------------------------------------------------------------
-  local settingsPage = pages[2]
-  pageHeader(settingsPage, "Ayarlar",
-    canSave and "Tercihlerin bu cihazda saklanır." or "Tercihler yalnızca bu oturumda geçerli (executor dosya yazmayı desteklemiyor).")
+  local sp = pages[2]
+  tl(sp, "set_title", PAD, 30, IW, 30, 22, F.bold, C.text)
+  tl(sp, canSave and "set_saved" or "set_nosave", PAD, 62, IW, 16, 12, F.reg, C.muted)
 
-  local function settingRow(y, title, desc)
+  local function settingRow(y, tKey, dKey)
     local row = new("Frame", {
-      Size = UDim2.fromOffset(IW, 58),
-      Position = UDim2.fromOffset(PAD, y),
-      BackgroundTransparency = 1,
-      ZIndex = 2,
-    }, settingsPage)
-    label(row, title, 0, 9, 320, 20, 13, F.bold, C.text)
-    label(row, desc, 0, 29, 320, 16, 11, F.reg, C.faint)
+      Size = UDim2.fromOffset(IW, 58), Position = UDim2.fromOffset(PAD, y), BackgroundTransparency = 1, ZIndex = 2,
+    }, sp)
+    tl(row, tKey, 0, 9, 320, 20, 13, F.bold, C.text)
+    tl(row, dKey, 0, 29, 320, 16, 11, F.reg, C.faint)
     new("Frame", {
-      Size = UDim2.fromOffset(IW, 1),
-      Position = UDim2.fromOffset(0, 57),
-      BackgroundColor3 = C.line,
-      BorderSizePixel = 0,
-      ZIndex = 2,
+      Size = UDim2.fromOffset(IW, 1), Position = UDim2.fromOffset(0, 57), BackgroundColor3 = C.line, BorderSizePixel = 0, ZIndex = 2,
     }, row)
     return row
   end
 
   -- Vurgu rengi
-  local rowAccent = settingRow(104, "Vurgu rengi", "Düğmelerde ve işaretlerde kullanılan renk")
+  local rowAccent = settingRow(96, "accent", "accent_d")
   local swHolder = new("Frame", {
-    Size = UDim2.fromOffset(#ACCENTS * 28 + (#ACCENTS - 1) * 10, 28),
-    AnchorPoint = Vector2.new(1, 0.5),
-    Position = UDim2.new(1, 0, 0.5, -1),
-    BackgroundTransparency = 1,
-    ZIndex = 3,
+    Size = UDim2.fromOffset(#ACCENTS * 28 + (#ACCENTS - 1) * 10, 28), AnchorPoint = Vector2.new(1, 0.5),
+    Position = UDim2.new(1, 0, 0.5, -1), BackgroundTransparency = 1, ZIndex = 3,
   }, rowAccent)
   local swatches = {}
-  for i, a in ipairs(ACCENTS) do
+  for i, col in ipairs(ACCENTS) do
     local sw = new("TextButton", {
-      Size = UDim2.fromOffset(28, 28),
-      Position = UDim2.fromOffset((i - 1) * 38, 0),
-      BackgroundColor3 = a.color,
-      BorderSizePixel = 0,
-      Text = "",
-      AutoButtonColor = false,
-      ZIndex = 4,
+      Size = UDim2.fromOffset(28, 28), Position = UDim2.fromOffset((i - 1) * 38, 0),
+      BackgroundColor3 = col, BorderSizePixel = 0, Text = "", AutoButtonColor = false, ZIndex = 4,
     }, swHolder)
     round(sw, 14)
-    local st = new("UIStroke", {
-      ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
-      Color = C.white,
-      Thickness = 2,
+    swatches[i] = new("UIStroke", {
+      ApplyStrokeMode = Enum.ApplyStrokeMode.Border, Color = C.white, Thickness = 2,
       Transparency = (i == settings.accent) and 0 or 1,
     }, sw)
-    swatches[i] = st
-    sw.MouseButton1Click:Connect(function()
-      setAccent(i)
-      saveSettings()
-    end)
+    sw.MouseButton1Click:Connect(function() setAccent(i) saveSettings() end)
   end
   refreshSwatches = function()
-    for i, st in ipairs(swatches) do
-      tw(st, { Transparency = (i == settings.accent) and 0 or 1 }, 0.15)
-    end
+    for i, st in ipairs(swatches) do tw(st, { Transparency = (i == settings.accent) and 0 or 1 }, 0.15) end
   end
 
-  -- Animasyonlar
-  local rowAnim = settingRow(162, "Animasyonlar", "Arka plan ve geçiş hareketleri")
-  local toggleTrack = new("TextButton", {
-    Size = UDim2.fromOffset(48, 26),
-    AnchorPoint = Vector2.new(1, 0.5),
-    Position = UDim2.new(1, 0, 0.5, -1),
-    BackgroundColor3 = C.line,
-    BorderSizePixel = 0,
-    Text = "",
-    AutoButtonColor = false,
-    ZIndex = 3,
-  }, rowAnim)
-  round(toggleTrack, 13)
-  local toggleKnob = new("Frame", {
-    Size = UDim2.fromOffset(20, 20),
-    Position = UDim2.fromOffset(3, 3),
-    BackgroundColor3 = C.white,
-    BorderSizePixel = 0,
-    ZIndex = 4,
-  }, toggleTrack)
-  round(toggleKnob, 10)
-
-  refreshToggle = function()
-    tw(toggleTrack, { BackgroundColor3 = settings.anim and accent or C.line }, 0.2)
-    tw(toggleKnob, { Position = settings.anim and UDim2.fromOffset(25, 3) or UDim2.fromOffset(3, 3) }, 0.2)
+  -- Aç/kapat düğmesi üretici
+  local function toggleRow(y, tKey, dKey, getVal, onClick)
+    local row = settingRow(y, tKey, dKey)
+    local track = new("TextButton", {
+      Size = UDim2.fromOffset(48, 26), AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, 0, 0.5, -1),
+      BackgroundColor3 = C.line, BorderSizePixel = 0, Text = "", AutoButtonColor = false, ZIndex = 3,
+    }, row)
+    round(track, 13)
+    local knob = new("Frame", {
+      Size = UDim2.fromOffset(20, 20), Position = UDim2.fromOffset(3, 3), BackgroundColor3 = C.white, BorderSizePixel = 0, ZIndex = 4,
+    }, track)
+    round(knob, 10)
+    local function refresh()
+      local on = getVal()
+      tw(track, { BackgroundColor3 = on and accent or C.line }, 0.2)
+      tw(knob, { Position = on and UDim2.fromOffset(25, 3) or UDim2.fromOffset(3, 3) }, 0.2)
+    end
+    track.MouseButton1Click:Connect(onClick)
+    return refresh
   end
 
   local function applyAnim()
     for _, t in ipairs(ambientTweens) do
-      safe(function()
-        if settings.anim then t:Play() else t:Pause() end
-      end)
+      safe(function() if settings.anim then t:Play() else t:Pause() end end)
     end
   end
 
-  toggleTrack.MouseButton1Click:Connect(function()
+  local function applyBg()
+    tw(bg, { BackgroundTransparency = settings.bg and 1 or 0 }, 0.3)
+  end
+
+  refreshToggle = toggleRow(154, "anim", "anim_d", function() return settings.anim end, function()
     settings.anim = not settings.anim
     applyAnim()
     refreshToggle()
     saveSettings()
   end)
 
+  refreshBgToggle = toggleRow(212, "bg", "bg_d", function() return settings.bg end, function()
+    settings.bg = not settings.bg
+    applyBg()
+    refreshBgToggle()
+    saveSettings()
+  end)
+
   -- Pencere boyutu
-  local rowScale = settingRow(220, "Pencere boyutu", "Menüyü ekranına göre büyüt veya küçült")
+  local rowScale = settingRow(270, "size", "size_d")
+  local SC_KEYS = { "s_small", "s_normal", "s_large" }
   local segHolder = new("Frame", {
-    Size = UDim2.fromOffset(#SCALES * 66 + (#SCALES - 1) * 4, 30),
-    AnchorPoint = Vector2.new(1, 0.5),
-    Position = UDim2.new(1, 0, 0.5, -1),
-    BackgroundTransparency = 1,
-    ZIndex = 3,
+    Size = UDim2.fromOffset(#SCALES * 66 + (#SCALES - 1) * 4, 30), AnchorPoint = Vector2.new(1, 0.5),
+    Position = UDim2.new(1, 0, 0.5, -1), BackgroundTransparency = 1, ZIndex = 3,
   }, rowScale)
   local scaleBtns = {}
-  for i, sc in ipairs(SCALES) do
+  for i = 1, #SCALES do
     local sb = new("TextButton", {
-      Size = UDim2.fromOffset(66, 30),
-      Position = UDim2.fromOffset((i - 1) * 70, 0),
-      BackgroundColor3 = C.card,
-      BorderSizePixel = 0,
-      Text = sc.name,
-      TextColor3 = C.muted,
-      TextSize = 11,
-      Font = F.bold,
-      AutoButtonColor = false,
-      ZIndex = 4,
+      Size = UDim2.fromOffset(66, 30), Position = UDim2.fromOffset((i - 1) * 70, 0), BackgroundColor3 = C.card,
+      BorderSizePixel = 0, Text = "", TextColor3 = C.muted, TextSize = 11, Font = F.bold, AutoButtonColor = false, ZIndex = 4,
     }, segHolder)
     round(sb, 9)
     stroke(sb, C.line, 1)
+    regText(sb, SC_KEYS[i])
     scaleBtns[i] = sb
     sb.MouseButton1Click:Connect(function()
       settings.scale = i
@@ -860,166 +733,291 @@ local function build()
     end
   end
 
-  -- Varsayılana dön
-  local rowReset = settingRow(278, "Varsayılana dön", "Renk, animasyon ve boyutu ilk haline getirir")
+  -- Dil
+  local rowLang = settingRow(328, "lang", "lang_d")
+  local langHolder = new("Frame", {
+    Size = UDim2.fromOffset(2 * 86 + 4, 30), AnchorPoint = Vector2.new(1, 0.5),
+    Position = UDim2.new(1, 0, 0.5, -1), BackgroundTransparency = 1, ZIndex = 3,
+  }, rowLang)
+  local langBtns, LANGS = {}, { { "tr", "TÜRKÇE" }, { "en", "ENGLISH" } }
+  local function setLang(code)
+    settings.lang = code
+    for _, e in ipairs(langObjs) do safe(function() e.obj[e.prop] = T(e.key) end) end
+    for _, f in ipairs(langFns) do safe(f) end
+    if refreshLang2 then refreshLang2() end
+    saveSettings()
+  end
+  for i, l in ipairs(LANGS) do
+    local lb = new("TextButton", {
+      Size = UDim2.fromOffset(86, 30), Position = UDim2.fromOffset((i - 1) * 90, 0), BackgroundColor3 = C.card,
+      BorderSizePixel = 0, Text = l[2], TextColor3 = C.muted, TextSize = 11, Font = F.bold, AutoButtonColor = false, ZIndex = 4,
+    }, langHolder)
+    round(lb, 9)
+    stroke(lb, C.line, 1)
+    langBtns[i] = lb
+    lb.MouseButton1Click:Connect(function() setLang(l[1]) end)
+  end
+  refreshLang2 = function()
+    for i, lb in ipairs(langBtns) do
+      local on = (LANGS[i][1] == (settings.lang or "tr"))
+      tw(lb, { BackgroundColor3 = on and accent or C.card, TextColor3 = on and C.white or C.muted }, 0.2)
+    end
+  end
+
+  -- Sıfırla
+  local rowReset = settingRow(386, "reset", "reset_d")
   local resetBtn = new("TextButton", {
-    Size = UDim2.fromOffset(110, 32),
-    AnchorPoint = Vector2.new(1, 0.5),
-    Position = UDim2.new(1, 0, 0.5, -1),
-    BackgroundColor3 = C.card,
-    BorderSizePixel = 0,
-    Text = "SIFIRLA",
-    TextColor3 = C.text,
-    TextSize = 11,
-    Font = F.bold,
-    AutoButtonColor = false,
-    ZIndex = 4,
+    Size = UDim2.fromOffset(110, 32), AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, 0, 0.5, -1),
+    BackgroundColor3 = C.card, BorderSizePixel = 0, Text = "", TextColor3 = C.text, TextSize = 11, Font = F.bold,
+    AutoButtonColor = false, ZIndex = 4,
   }, rowReset)
   round(resetBtn, 10)
   stroke(resetBtn, C.line, 1)
+  regText(resetBtn, "reset_b")
   resetBtn.MouseEnter:Connect(function() tw(resetBtn, { BackgroundColor3 = C.cardHi }, 0.12) end)
   resetBtn.MouseLeave:Connect(function() tw(resetBtn, { BackgroundColor3 = C.card }, 0.12) end)
   resetBtn.MouseButton1Click:Connect(function()
-    settings.scale = 2
-    settings.anim = true
+    settings.scale, settings.anim, settings.bg = 2, true, true
     setAccent(1)
     applyAnim()
+    applyBg()
     fitWindow(true)
     saveSettings()
-    if toast then toast("Ayarlar varsayılana döndü.", C.ok) end
+    if toast then toast(T("reset_ok"), C.ok) end
   end)
 
   ------------------------------------------------------------
-  -- Sayfa 3: KREDİLER (kendiliğinden akan jenerik)
+  -- Sayfa 3: SCRIPT HUB
   ------------------------------------------------------------
-  local creditsPage = pages[3]
-  pageHeader(creditsPage, "Krediler", "Sistemi yapanlar ve oturum bilgin")
-  label(creditsPage, "Dokun: duraklat veya devam et", CW - PAD - 260, 36, 260, 16, 11, F.reg, C.faint, AR)
+  local hubPage = pages[3]
+  pageHeader(hubPage, "hub_title", "hub_sub")
+  local createBtn = new("TextButton", {
+    Size = UDim2.fromOffset(130, 36), Position = UDim2.fromOffset(CW - PAD - 130, 28), BorderSizePixel = 0,
+    Text = "", TextColor3 = C.white, TextSize = 13, Font = F.bold, AutoButtonColor = false, ZIndex = 4,
+  }, hubPage)
+  round(createBtn, 10)
+  useAccent(createBtn, "BackgroundColor3")
+  regText(createBtn, "create")
+  createBtn.MouseEnter:Connect(function() tw(createBtn, { BackgroundColor3 = accentHi }, 0.12) end)
+  createBtn.MouseLeave:Connect(function() tw(createBtn, { BackgroundColor3 = accent }, 0.12) end)
 
-  local credViewH = 392
-  local credViewport = new("Frame", {
-    Size = UDim2.fromOffset(IW, credViewH),
-    Position = UDim2.fromOffset(PAD, 92),
-    BackgroundColor3 = C.bg,
-    BorderSizePixel = 0,
-    ClipsDescendants = true,
-    ZIndex = 2,
-  }, creditsPage)
-  round(credViewport, 14)
-  stroke(credViewport, C.line, 1)
-
-  local credContent = new("Frame", {
-    Size = UDim2.fromOffset(IW, 10),
-    Position = UDim2.fromOffset(0, credViewH),
-    BackgroundTransparency = 1,
-    ZIndex = 2,
-  }, credViewport)
-
-  local cy = 0
-  for _, row in ipairs(CREDITS) do
-    local kind = row[1]
-    if kind == "title" then
-      label(credContent, row[2], 0, cy, IW, 44, 30, F.bold, C.text, AC)
-      cy = cy + 44
-    elseif kind == "sub" then
-      label(credContent, row[2], 0, cy, IW, 20, 12, F.reg, C.muted, AC)
-      cy = cy + 20
-    elseif kind == "gap" then
-      cy = cy + (tonumber(row[2]) or 20)
-    elseif kind == "role" then
-      local rl = label(credContent, row[2], 0, cy, IW, 16, 11, F.med, accent, AC)
-      useAccent(rl, "TextColor3")
-      label(credContent, row[3], 0, cy + 16, IW, 28, 20, F.bold, C.text, AC, { TextTruncate = Enum.TextTruncate.AtEnd })
-      cy = cy + 68
-    elseif kind == "note" then
-      label(credContent, row[2], 40, cy, IW - 80, 40, 13, F.reg, C.muted, AC, { TextWrapped = true })
-      cy = cy + 44
+  local hubSort = "new"
+  local TABS = { { "new", "t_new" }, { "top", "t_top" }, { "popular", "t_pop" } }
+  local tabBtns = {}
+  for i, t in ipairs(TABS) do
+    local b = new("TextButton", {
+      Size = UDim2.fromOffset(118, 30), Position = UDim2.fromOffset(PAD + (i - 1) * 124, 94), BackgroundColor3 = C.card,
+      BorderSizePixel = 0, Text = "", TextColor3 = C.muted, TextSize = 10, Font = F.bold, AutoButtonColor = false, ZIndex = 4,
+    }, hubPage)
+    round(b, 9)
+    stroke(b, C.line, 1)
+    regText(b, t[2])
+    tabBtns[i] = b
+    b.MouseButton1Click:Connect(function()
+      hubSort = t[1]
+      refreshTabs()
+      if refreshHub then refreshHub() end
+    end)
+  end
+  refreshTabs = function()
+    for i, b in ipairs(tabBtns) do
+      local on = (TABS[i][1] == hubSort)
+      tw(b, { BackgroundColor3 = on and accent or C.card, TextColor3 = on and C.white or C.muted }, 0.2)
     end
   end
-  local credH = cy + 24
-  safe(function() credContent.Size = UDim2.fromOffset(IW, credH) end)
 
-  local function fadeMask(top)
-    local m = new("Frame", {
-      Size = UDim2.fromOffset(IW, 64),
-      Position = top and UDim2.fromOffset(0, 0) or UDim2.fromOffset(0, credViewH - 64),
-      BackgroundColor3 = C.bg,
-      BorderSizePixel = 0,
-      ZIndex = 6,
-    }, credViewport)
-    round(m, 14)
-    new("UIGradient", {
-      Rotation = 90,
-      Transparency = top and NumberSequence.new(0, 1) or NumberSequence.new(1, 0),
-    }, m)
-  end
-  fadeMask(true)
-  fadeMask(false)
+  local idFrame = new("Frame", {
+    Size = UDim2.fromOffset(112, 30), Position = UDim2.fromOffset(PAD + 376, 94), BackgroundColor3 = C.card, BorderSizePixel = 0, ZIndex = 3,
+  }, hubPage)
+  round(idFrame, 9)
+  stroke(idFrame, C.line, 1)
+  local idBox = new("TextBox", {
+    Size = UDim2.new(1, -16, 1, 0), Position = UDim2.fromOffset(8, 0), BackgroundTransparency = 1, Text = "",
+    PlaceholderText = "", PlaceholderColor3 = C.faint, TextColor3 = C.text, TextSize = 12, Font = F.med,
+    ClearTextOnFocus = false, TextXAlignment = AL, ZIndex = 4,
+  }, idFrame)
+  regText(idBox, "id_ph", "PlaceholderText")
+  local goBtn = new("TextButton", {
+    Size = UDim2.fromOffset(60, 30), Position = UDim2.fromOffset(PAD + 512, 94), BackgroundColor3 = C.cardHi,
+    BorderSizePixel = 0, Text = "", TextColor3 = C.text, TextSize = 11, Font = F.bold, AutoButtonColor = false, ZIndex = 4,
+  }, hubPage)
+  round(goBtn, 9)
+  regText(goBtn, "go")
 
-  local pausedTag = new("Frame", {
-    Size = UDim2.fromOffset(270, 30),
-    AnchorPoint = Vector2.new(0.5, 1),
-    Position = UDim2.new(0.5, 0, 1, -14),
-    BackgroundColor3 = C.cardHi,
-    BorderSizePixel = 0,
-    Visible = false,
-    ZIndex = 9,
-  }, credViewport)
-  round(pausedTag, 15)
-  stroke(pausedTag, C.line, 1)
-  label(pausedTag, "Duraklatıldı. Devam etmek için dokun.", 0, 0, 270, 30, 11, F.med, C.text, AC, { ZIndex = 10 })
+  local scroll = new("ScrollingFrame", {
+    Size = UDim2.fromOffset(IW, 352), Position = UDim2.fromOffset(PAD, 138), BackgroundTransparency = 1, BorderSizePixel = 0,
+    ScrollBarThickness = 3, CanvasSize = UDim2.fromOffset(0, 0), AutomaticCanvasSize = Enum.AutomaticSize.Y, ZIndex = 3,
+  }, hubPage)
+  new("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder }, scroll)
 
-  local credY, credPaused, credActive = credViewH, false, false
+  local function hubApi() return (type(S.HUB) == "table") and S.HUB or {} end
 
-  local function resetCredits()
-    credY = credViewH * 0.5
-    credPaused = false
-    safe(function() pausedTag.Visible = false end)
-    safe(function() credContent.Position = UDim2.fromOffset(0, credY) end)
+  local function clearList()
+    for _, c in ipairs(scroll:GetChildren()) do
+      if c.Name == "Card" or c.Name == "Empty" then safe(function() c:Destroy() end) end
+    end
   end
 
-  local credTouch = new("TextButton", {
-    Size = UDim2.fromScale(1, 1),
-    BackgroundTransparency = 1,
-    Text = "",
-    AutoButtonColor = false,
-    ZIndex = 8,
-  }, credViewport)
-  credTouch.MouseButton1Click:Connect(function()
-    credPaused = not credPaused
-    safe(function() pausedTag.Visible = credPaused end)
-  end)
+  local function showEmpty(key)
+    clearList()
+    local l = label(scroll, "", 0, 0, IW, 80, 13, F.med, C.faint, AC, { TextWrapped = true, Name = "Empty" })
+    regText(l, key)
+  end
 
-  if RunService then
-    conns[#conns + 1] = RunService.Heartbeat:Connect(function(dt)
-      if not credActive or credPaused or closing then return end
-      credY = credY - 44 * dt
-      if credY < -credH then credY = credViewH end
-      credContent.Position = UDim2.fromOffset(0, credY)
+  local function runEntry(entry)
+    spawn(function()
+      local api = hubApi()
+      local ok, err = pcall(function()
+        if type(api.run) == "function" then
+          api.run(entry.id)
+        else
+          local e = entry
+          if not e.code and type(api.get) == "function" then e = api.get(entry.id) end
+          if type(e) ~= "table" or type(e.code) ~= "string" or e.code == "" then error("kod yok") end
+          local fn, cerr = loadstring(e.code)
+          if not fn then error(cerr) end
+          fn()
+        end
+      end)
+      if ok then toast(T("run_ok"), C.ok) else toast(T("run_fail") .. tostring(err), C.danger) end
     end)
   end
 
+  local function renderEntries(list)
+    clearList()
+    if type(list) ~= "table" or #list == 0 then showEmpty("empty") return end
+    for i, e in ipairs(list) do
+      if i > 60 then break end
+      if type(e) == "table" then
+        local card = new("Frame", {
+          Name = "Card", Size = UDim2.fromOffset(IW - 6, 64), BackgroundColor3 = C.card, BorderSizePixel = 0,
+          LayoutOrder = i, ZIndex = 3,
+        }, scroll)
+        round(card, 12)
+        stroke(card, C.line, 1)
+        local thumb = new("ImageLabel", {
+          Size = UDim2.fromOffset(46, 46), Position = UDim2.fromOffset(9, 9), BackgroundColor3 = C.cardHi,
+          BorderSizePixel = 0, ScaleType = Enum.ScaleType.Crop, ZIndex = 4,
+        }, card)
+        round(thumb, 9)
+        local imgId = tonumber(e.image)
+        if imgId then safe(function() thumb.Image = "rbxassetid://" .. tostring(imgId) end) end
+        label(card, tostring(e.name or "?"), 64, 9, IW - 220, 20, 13, F.bold, C.text, AL,
+          { ZIndex = 4, TextTruncate = Enum.TextTruncate.AtEnd })
+        local r = tonumber(e.rating)
+        local info = T("by") .. " " .. tostring(e.author or "?") .. "   ID #" .. tostring(e.id or "?")
+          .. (r and ("   ★ " .. string.format("%.1f", r)) or "")
+        label(card, info, 64, 31, IW - 220, 18, 11, F.reg, C.muted, AL, { ZIndex = 4, TextTruncate = Enum.TextTruncate.AtEnd })
+        local rb = new("TextButton", {
+          Size = UDim2.fromOffset(92, 32), Position = UDim2.fromOffset(IW - 6 - 104, 16), BorderSizePixel = 0,
+          Text = "", TextColor3 = C.white, TextSize = 11, Font = F.bold, AutoButtonColor = false, ZIndex = 4,
+        }, card)
+        round(rb, 9)
+        useAccent(rb, "BackgroundColor3")
+        regText(rb, "run")
+        rb.MouseButton1Click:Connect(function() runEntry(e) end)
+      end
+    end
+  end
+
+  refreshHub = function()
+    local api = hubApi()
+    if type(api.list) ~= "function" then showEmpty("empty") return end
+    local sort = hubSort
+    spawn(function()
+      local ok, res = pcall(api.list, sort, 1)
+      if not alive or sort ~= hubSort then return end
+      if ok then renderEntries(res) else showEmpty("empty") end
+    end)
+  end
+
+  local function searchId()
+    local id = tonumber(trim(idBox.Text))
+    if not id or id < 1 or id ~= math.floor(id) then toast(T("bad_id"), C.danger) return end
+    local api = hubApi()
+    if type(api.get) ~= "function" then showEmpty("empty") return end
+    spawn(function()
+      local ok, e = pcall(api.get, id)
+      if not alive then return end
+      if ok and type(e) == "table" then renderEntries({ e }) else showEmpty("none_found") end
+    end)
+  end
+  goBtn.MouseButton1Click:Connect(searchId)
+  idBox.FocusLost:Connect(function(enter) if enter then searchId() end end)
+
   ------------------------------------------------------------
-  -- Bildirim (toast)
+  -- Sayfa 4: CREATE
+  ------------------------------------------------------------
+  local cp = pages[4]
+  pageHeader(cp, "c_title", "c_sub")
+  local function inputBox(y, h, key, multi)
+    local f = new("Frame", {
+      Size = UDim2.fromOffset(IW, h), Position = UDim2.fromOffset(PAD, y), BackgroundColor3 = C.card, BorderSizePixel = 0, ZIndex = 3,
+    }, cp)
+    round(f, 10)
+    stroke(f, C.line, 1)
+    local b = new("TextBox", {
+      Size = UDim2.new(1, -24, 1, -(multi and 16 or 0)), Position = UDim2.fromOffset(12, multi and 8 or 0),
+      BackgroundTransparency = 1, Text = "", PlaceholderText = "", PlaceholderColor3 = C.faint, TextColor3 = C.text,
+      TextSize = 13, Font = F.reg, ClearTextOnFocus = false, MultiLine = multi and true or false,
+      TextWrapped = multi and true or false, TextXAlignment = AL,
+      TextYAlignment = multi and Enum.TextYAlignment.Top or Enum.TextYAlignment.Center, ZIndex = 4,
+    }, f)
+    regText(b, key, "PlaceholderText")
+    return b
+  end
+  local fName  = inputBox(96, 40, "f_name", false)
+  local fImage = inputBox(144, 40, "f_image", false)
+  local fDesc  = inputBox(192, 40, "f_desc", false)
+  local fCode  = inputBox(240, 180, "f_code", true)
+
+  local pubBtn = new("TextButton", {
+    Size = UDim2.fromOffset(IW, 46), Position = UDim2.fromOffset(PAD, 432), BorderSizePixel = 0,
+    Text = "", TextColor3 = C.white, TextSize = 14, Font = F.bold, AutoButtonColor = false, ZIndex = 4,
+  }, cp)
+  round(pubBtn, 12)
+  useAccent(pubBtn, "BackgroundColor3")
+  regText(pubBtn, "publish")
+  pubBtn.MouseEnter:Connect(function() tw(pubBtn, { BackgroundColor3 = accentHi }, 0.12) end)
+  pubBtn.MouseLeave:Connect(function() tw(pubBtn, { BackgroundColor3 = accent }, 0.12) end)
+
+  local publishing = false
+  pubBtn.MouseButton1Click:Connect(function()
+    if publishing then return end
+    local name, code = trim(fName.Text), fCode.Text or ""
+    if #name < 3 or #name > 40 then toast(T("bad_name"), C.danger) return end
+    if trim(code) == "" then toast(T("bad_code"), C.danger) return end
+    local mod = S.CREATE
+    if type(mod) ~= "table" or type(mod.publish) ~= "function" then toast(T("not_ready"), C.danger) return end
+    publishing = true
+    toast(T("pub_ing"), accent)
+    spawn(function()
+      local ok, res, msg = pcall(mod.publish, {
+        name = name, image = tonumber(trim(fImage.Text)), desc = trim(fDesc.Text), code = code,
+        author = nick, apiKey = S.API_KEY,
+      })
+      publishing = false
+      if not alive then return end
+      if ok and res == true then
+        toast(T("pub_ok") .. tostring(msg or "?"), C.ok)
+        safe(function() fName.Text, fImage.Text, fDesc.Text, fCode.Text = "", "", "", "" end)
+      else
+        toast(T("pub_fail") .. tostring((ok and msg) or res or "?"), C.danger)
+      end
+    end)
+  end)
+
+  ------------------------------------------------------------
+  -- Bildirim
   ------------------------------------------------------------
   local toastFrame = new("Frame", {
-    Name = "Toast",
-    Size = UDim2.fromOffset(470, 42),
-    AnchorPoint = Vector2.new(0.5, 1),
-    Position = UDim2.new(0.5, 0, 1, 70),
-    BackgroundColor3 = C.cardHi,
-    BorderSizePixel = 0,
-    Visible = false,
-    ZIndex = 60,
+    Name = "Toast", Size = UDim2.fromOffset(470, 42), AnchorPoint = Vector2.new(0.5, 1),
+    Position = UDim2.new(0.5, 0, 1, 70), BackgroundColor3 = C.cardHi, BorderSizePixel = 0, Visible = false, ZIndex = 60,
   }, window)
   round(toastFrame, 21)
   stroke(toastFrame, C.line, 1)
   local toastDot = new("Frame", {
-    Size = UDim2.fromOffset(8, 8),
-    Position = UDim2.fromOffset(18, 17),
-    BackgroundColor3 = C.muted,
-    BorderSizePixel = 0,
-    ZIndex = 61,
+    Size = UDim2.fromOffset(8, 8), Position = UDim2.fromOffset(18, 17), BackgroundColor3 = C.muted, BorderSizePixel = 0, ZIndex = 61,
   }, toastFrame)
   round(toastDot, 4)
   local toastText = label(toastFrame, "", 36, 0, 422, 42, 12, F.med, C.text, AL,
@@ -1035,7 +1033,7 @@ local function build()
       toastFrame.Visible = true
     end)
     tw(toastFrame, { Position = UDim2.new(0.5, 0, 1, -18) }, 0.35, 0, Enum.EasingStyle.Quint)
-    delay(3, function()
+    delay(3.5, function()
       if my ~= toastToken then return end
       tw(toastFrame, { Position = UDim2.new(0.5, 0, 1, 70) }, 0.3)
       delay(0.35, function()
@@ -1045,61 +1043,122 @@ local function build()
   end
 
   ------------------------------------------------------------
+  -- Loading ekranı (tam ekran siyah)
+  ------------------------------------------------------------
+  local loadOv = new("Frame", {
+    Name = "Loading", Size = UDim2.fromScale(1, 1), BackgroundColor3 = Color3.fromRGB(0, 0, 0),
+    BorderSizePixel = 0, Visible = false, Active = true, ZIndex = 200,
+  }, gui)
+  local loadTitle = new("TextLabel", {
+    Size = UDim2.fromOffset(900, 56), Position = UDim2.fromScale(0.5, 0.45), AnchorPoint = Vector2.new(0.5, 0.5),
+    BackgroundTransparency = 1, Text = "", TextColor3 = C.white, TextSize = 32, Font = F.bold, ZIndex = 201,
+  }, loadOv)
+  local loadSub = new("TextLabel", {
+    Size = UDim2.fromOffset(900, 24), Position = UDim2.fromScale(0.5, 0.52), AnchorPoint = Vector2.new(0.5, 0.5),
+    BackgroundTransparency = 1, Text = "", TextColor3 = Color3.fromRGB(150, 152, 158), TextSize = 13, Font = F.med, ZIndex = 201,
+  }, loadOv)
+  local barBg = new("Frame", {
+    Size = UDim2.fromOffset(280, 4), Position = UDim2.fromScale(0.5, 0.6), AnchorPoint = Vector2.new(0.5, 0.5),
+    BackgroundColor3 = Color3.fromRGB(40, 42, 48), BorderSizePixel = 0, ZIndex = 201,
+  }, loadOv)
+  local bar = new("Frame", {
+    Size = UDim2.fromOffset(0, 4), BackgroundColor3 = accent, BorderSizePixel = 0, ZIndex = 202,
+  }, barBg)
+  round(bar, 2)
+  useAccent(bar, "BackgroundColor3")
+  safe(function()
+    TweenService:Create(bar, TweenInfo.new(1.1, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
+      { Size = UDim2.fromOffset(280, 4) }):Play()
+  end)
+
+  showLoading = function(titleKey)
+    safe(function()
+      loadTitle.Text = T(titleKey)
+      loadSub.Text = T("ld_sub")
+      loadOv.BackgroundTransparency = 1
+      loadTitle.TextTransparency = 1
+      loadSub.TextTransparency = 1
+      loadOv.Visible = true
+    end)
+    tw(loadOv, { BackgroundTransparency = 0 }, 0.25)
+    tw(loadTitle, { TextTransparency = 0 }, 0.25)
+    tw(loadSub, { TextTransparency = 0 }, 0.25)
+  end
+  hideLoading = function()
+    tw(loadOv, { BackgroundTransparency = 1 }, 0.3)
+    tw(loadTitle, { TextTransparency = 1 }, 0.25)
+    tw(loadSub, { TextTransparency = 1 }, 0.25)
+    delay(0.35, function() safe(function() loadOv.Visible = false end) end)
+  end
+
+  -- Uzak modülü yükle; başarısızsa loading kapanır, menüde kalınır, hata gösterilir
+  local busyLoad = false
+  ensureModule = function(url, okKey, modKey, titleKey, onOk)
+    if S[okKey] then onOk() return end
+    if busyLoad or closing then return end
+    busyLoad = true
+    showLoading(titleKey)
+    spawn(function()
+      local t0 = os.clock()
+      local ok, mod = fetchLoad(url)
+      local rest = 1.0 - (os.clock() - t0)
+      if rest > 0 then sleep(rest) end
+      busyLoad = false
+      if not alive then return end
+      if ok then
+        S[okKey] = true
+        S[modKey] = mod
+        hideLoading()
+        onOk()
+      else
+        print("[main-menu] " .. tostring(titleKey) .. " basarisiz: " .. tostring(mod))
+        hideLoading()
+        sleep(0.35)
+        toast(T("not_ready"), C.danger)
+      end
+    end)
+  end
+
+  hubBtn.MouseButton1Click:Connect(function()
+    ensureModule(CONFIG.PROBE_URL, "HUB_OK", "HUB", "ld_hub", function()
+      goTo(3)
+      refreshHub()
+    end)
+  end)
+  createBtn.MouseButton1Click:Connect(function()
+    ensureModule(CONFIG.CREATE_URL, "CREATE_OK", "CREATE", "ld_create", function() goTo(4) end)
+  end)
+
+  ------------------------------------------------------------
   -- Çıkış onay penceresi
   ------------------------------------------------------------
   local modal = new("TextButton", {
-    Name = "Modal",
-    Size = UDim2.fromScale(1, 1),
-    BackgroundColor3 = Color3.fromRGB(0, 0, 0),
-    BackgroundTransparency = 1,
-    BorderSizePixel = 0,
-    Text = "",
-    AutoButtonColor = false,
-    Visible = false,
-    ZIndex = 80,
+    Name = "Modal", Size = UDim2.fromScale(1, 1), BackgroundColor3 = Color3.fromRGB(0, 0, 0),
+    BackgroundTransparency = 1, BorderSizePixel = 0, Text = "", AutoButtonColor = false, Visible = false, ZIndex = 80,
   }, window)
   round(modal, 18)
-
   local dlg = new("Frame", {
-    Size = UDim2.fromOffset(340, 176),
-    AnchorPoint = Vector2.new(0.5, 0.5),
-    Position = UDim2.fromScale(0.5, 0.5),
-    BackgroundColor3 = C.card,
-    BorderSizePixel = 0,
-    ZIndex = 81,
+    Size = UDim2.fromOffset(340, 176), AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5),
+    BackgroundColor3 = C.card, BorderSizePixel = 0, ZIndex = 81,
   }, modal)
   round(dlg, 16)
   stroke(dlg, C.line, 1)
-  label(dlg, "Oturumu kapat", 24, 22, 292, 22, 16, F.bold, C.text, AL, { ZIndex = 82 })
-  label(dlg, "Çıkış yaptığında giriş ekranına dönersin.", 24, 50, 292, 40, 12, F.reg, C.muted, AL,
+  tl(dlg, "out_title", 24, 22, 292, 22, 16, F.bold, C.text, AL, { ZIndex = 82 })
+  tl(dlg, "out_desc", 24, 50, 292, 40, 12, F.reg, C.muted, AL,
     { ZIndex = 82, TextWrapped = true, TextYAlignment = Enum.TextYAlignment.Top })
 
   local cancelBtn = new("TextButton", {
-    Size = UDim2.fromOffset(138, 40),
-    Position = UDim2.fromOffset(24, 112),
-    BackgroundColor3 = C.cardHi,
-    BorderSizePixel = 0,
-    Text = "VAZGEÇ",
-    TextColor3 = C.text,
-    TextSize = 12,
-    Font = F.bold,
-    AutoButtonColor = false,
-    ZIndex = 82,
+    Size = UDim2.fromOffset(138, 40), Position = UDim2.fromOffset(24, 112), BackgroundColor3 = C.cardHi, BorderSizePixel = 0,
+    Text = "", TextColor3 = C.text, TextSize = 12, Font = F.bold, AutoButtonColor = false, ZIndex = 82,
   }, dlg)
   round(cancelBtn, 12)
+  regText(cancelBtn, "cancel")
   local confirmBtn = new("TextButton", {
-    Size = UDim2.fromOffset(138, 40),
-    Position = UDim2.fromOffset(178, 112),
-    BackgroundColor3 = C.danger,
-    BorderSizePixel = 0,
-    Text = "ÇIKIŞ YAP",
-    TextColor3 = C.white,
-    TextSize = 12,
-    Font = F.bold,
-    AutoButtonColor = false,
-    ZIndex = 82,
+    Size = UDim2.fromOffset(138, 40), Position = UDim2.fromOffset(178, 112), BackgroundColor3 = C.danger, BorderSizePixel = 0,
+    Text = "", TextColor3 = C.white, TextSize = 12, Font = F.bold, AutoButtonColor = false, ZIndex = 82,
   }, dlg)
   round(confirmBtn, 12)
+  regText(confirmBtn, "confirm")
   cancelBtn.MouseEnter:Connect(function() tw(cancelBtn, { BackgroundColor3 = C.line }, 0.12) end)
   cancelBtn.MouseLeave:Connect(function() tw(cancelBtn, { BackgroundColor3 = C.cardHi }, 0.12) end)
   confirmBtn.MouseEnter:Connect(function() tw(confirmBtn, { BackgroundColor3 = Color3.fromRGB(248, 98, 98) }, 0.12) end)
@@ -1121,14 +1180,10 @@ local function build()
     if not modalOpen then return end
     modalOpen = false
     tw(modal, { BackgroundTransparency = 1 }, 0.15)
-    delay(0.18, function()
-      if not modalOpen then safe(function() modal.Visible = false end) end
-    end)
+    delay(0.18, function() if not modalOpen then safe(function() modal.Visible = false end) end end)
   end
   cancelBtn.MouseButton1Click:Connect(function() closeModal() end)
-  confirmBtn.MouseButton1Click:Connect(function()
-    if doLogout then doLogout() end
-  end)
+  confirmBtn.MouseButton1Click:Connect(function() if doLogout then doLogout() end end)
 
   ------------------------------------------------------------
   -- Sayfa geçişi
@@ -1142,10 +1197,7 @@ local function build()
     local token = switchToken
 
     refreshNav()
-    tw(indicator, { Position = UDim2.fromOffset(0, NAV_Y[idx] + 10) }, 0.3, 0, Enum.EasingStyle.Quint)
-
-    credActive = (idx == 3)
-    if idx == 3 then resetCredits() end
+    tw(indicator, { Position = UDim2.fromOffset(0, NAV_Y[navIndex(idx)] + 10) }, 0.3, 0, Enum.EasingStyle.Quint)
 
     for i, pf in ipairs(pages) do
       if i ~= old and i ~= idx then pf.Visible = false end
@@ -1157,7 +1209,6 @@ local function build()
       newF.Visible = true
       return
     end
-
     local dir = (idx > old) and 1 or -1
     local oldF = pages[old]
     newF.Position = UDim2.new(dir, 0, 0, 0)
@@ -1170,13 +1221,11 @@ local function build()
   end
 
   ------------------------------------------------------------
-  -- Eylemler: başlat / çıkış / kapat
+  -- Eylemler
   ------------------------------------------------------------
   local function destroyAll()
     alive = false
-    for _, c in ipairs(conns) do
-      safe(function() c:Disconnect() end)
-    end
+    for _, c in ipairs(conns) do safe(function() c:Disconnect() end) end
     safe(function() gui:Destroy() end)
   end
 
@@ -1184,7 +1233,6 @@ local function build()
     if closing then return end
     closing = true
     alive = false
-    safe(function() ambient.Visible = false end)
     tw(uiScale, { Scale = 0.02 }, 0.28, 0, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
     tw(bg, { BackgroundTransparency = 1 }, 0.3)
     sleep(0.32)
@@ -1197,30 +1245,26 @@ local function build()
     if starting or closing then return end
     local hasHook = (type(S.onStart) == "function")
     local hasUrl = (type(CONFIG.START_URL) == "string" and CONFIG.START_URL ~= "")
-    if not hasHook and not hasUrl then
-      toast("Script tanımlı değil. main-menu içindeki START_URL alanını doldur.", C.muted)
-      return
-    end
+    if not hasHook and not hasUrl then toast(T("no_script"), C.muted) return end
     starting = true
-    toast("Script başlatılıyor...", accent)
+    toast(T("starting"), accent)
     spawn(function()
       local ok, err = pcall(function()
         if hasHook then
           S.onStart(S.SESSION)
         else
-          local src = game:HttpGet(CONFIG.START_URL)
-          local fn, cerr = loadstring(src)
+          local fn, cerr = loadstring(game:HttpGet(CONFIG.START_URL))
           if not fn then error(cerr) end
           fn()
         end
       end)
       if ok then
-        toast("Script başlatıldı.", C.ok)
+        toast(T("started"), C.ok)
         sleep(0.6)
         closeMenu()
       else
         starting = false
-        toast("Başlatılamadı: " .. tostring(err), C.danger)
+        toast(T("start_fail") .. tostring(err), C.danger)
       end
     end)
   end
@@ -1228,18 +1272,13 @@ local function build()
   doLogout = function()
     if closing then return end
     closeModal()
-    toast("Oturum kapatılıyor...", C.danger)
+    toast(T("out_ing"), C.danger)
     spawn(function()
-      -- Önce giriş ekranını indir: indirilemezse menü açık kalır, oturum kaybolmaz
-      local okF, src = pcall(function()
-        return game:HttpGet(CONFIG.RESTART_URL .. "?t=" .. tostring(os.time()))
-      end)
-      if not okF or type(src) ~= "string" or #src < 200 then
-        toast("Giriş ekranı indirilemedi. Bağlantını kontrol edip tekrar dene.", C.danger)
-        return
-      end
+      local okF, src = pcall(function() return game:HttpGet(CONFIG.RESTART_URL .. "?t=" .. tostring(os.time())) end)
+      if not okF or type(src) ~= "string" or #src < 200 then toast(T("out_fail"), C.danger) return end
       S.SESSION = nil
       S.MAIN_READY = nil
+      S.HUB, S.HUB_OK, S.CREATE, S.CREATE_OK = nil, nil, nil, nil
       closeMenu(function()
         local okR, errR = pcall(function()
           local fn, cerr = loadstring(src)
@@ -1252,14 +1291,47 @@ local function build()
   end
 
   ------------------------------------------------------------
+  -- Dil seçme ekranı (ilk açılış)
+  ------------------------------------------------------------
+  local function openLangPicker()
+    local ov = new("TextButton", {
+      Size = UDim2.fromScale(1, 1), BackgroundColor3 = Color3.fromRGB(0, 0, 0), BackgroundTransparency = 0.35,
+      BorderSizePixel = 0, Text = "", AutoButtonColor = false, ZIndex = 150,
+    }, gui)
+    local box = new("Frame", {
+      Size = UDim2.fromOffset(380, 200), AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5),
+      BackgroundColor3 = C.card, BorderSizePixel = 0, ZIndex = 151,
+    }, ov)
+    round(box, 16)
+    stroke(box, C.line, 1)
+    label(box, STR.tr.pick, 20, 24, 340, 26, 17, F.bold, C.text, AC, { ZIndex = 152 })
+    for i, l in ipairs(LANGS) do
+      local b = new("TextButton", {
+        Size = UDim2.fromOffset(160, 64), Position = UDim2.fromOffset(20 + (i - 1) * 180, 88), BorderSizePixel = 0,
+        Text = l[2], TextColor3 = C.white, TextSize = 15, Font = F.bold, AutoButtonColor = false, ZIndex = 152,
+      }, box)
+      round(b, 14)
+      useAccent(b, "BackgroundColor3")
+      b.MouseButton1Click:Connect(function()
+        setLang(l[1])
+        safe(function() ov:Destroy() end)
+      end)
+    end
+  end
+
+  ------------------------------------------------------------
   -- İlk durum + açılış animasyonu
   ------------------------------------------------------------
   goTo(1, true)
   refreshNav()
   refreshSwatches()
   refreshToggle()
+  refreshBgToggle()
   refreshScale()
+  refreshLang2()
+  refreshTabs()
   applyAnim()
+  showEmpty("empty")
 
   local target = computeScale()
   if settings.anim then
@@ -1267,16 +1339,15 @@ local function build()
     tw(uiScale, { Scale = target }, 0.55, 0, Enum.EasingStyle.Quint)
     riseIn(hello, 0.10)
     riseIn(startBtn, 0.22)
+    riseIn(hubBtn, 0.28)
   else
     fitWindow(false)
   end
 
+  if not settings.lang then openLangPicker() end
+
   return {
-    gui = gui,
-    nickname = nick,
-    player = pname,
-    goTo = goTo,
-    toast = toast,
+    gui = gui, nickname = nick, player = pname, goTo = goTo, toast = toast,
     setStatus = function(text, color) toast(text, color) end,
     close = function() spawn(function() closeMenu() end) end,
     destroy = destroyAll,
