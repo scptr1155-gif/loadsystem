@@ -1,1 +1,940 @@
+-- hubcore | ORTAK KÜTÜPHANE (v1.0)  -> loadsystem deposuna "hubcore" adıyla yükle
+-- =========================================================
+-- scripthub, create a code, studio, profile ve script-menu bu dosyayı kullanır.
+-- İçerik: base64, json, HTTP, api-key okuma, index güncelleme (çakışmaya dayanıklı),
+-- dosya yaz/sil, günlük limit, istatistikler ve ortak pencere (ui) üreticisi.
+-- ui: GERİ / X (küçült -> "CR" logosu) sistemi burada, tüm ekranlar aynısını kullanır.
 
+local VERSION = "1.0"
+local G = (type(getgenv) == "function" and getgenv()) or _G
+local S = G.__LOADSYS or {}
+G.__LOADSYS = S
+if type(S.CORE) == "table" and S.CORE.version == VERSION then return S.CORE end
+
+local BASE  = "https://raw.githubusercontent.com/scptr1155-gif/loadsystem/refs/heads/main/"
+local STORE = "https://raw.githubusercontent.com/scptr1155-gif/roblox-game-star/refs/heads/main/"
+local OWNER, REPO, BRANCH = "scptr1155-gif", "roblox-game-star", "main"
+local REPO_API = "https://api.github.com/repos/" .. OWNER .. "/" .. REPO
+local API = REPO_API .. "/contents/"
+local INDEX_FILE = "hub-index.json"
+
+local M = {
+  version = VERSION, BASE = BASE, STORE = STORE, API = API, BRANCH = BRANCH,
+  MAX_ID = 999999999, INDEX_FILE = INDEX_FILE,
+}
+
+local function getService(n)
+  local ok, s = pcall(function() return game:GetService(n) end)
+  if ok and s then return s end
+  return nil
+end
+local Players, TweenService, CoreGui = getService("Players"), getService("TweenService"), getService("CoreGui")
+local HttpService, Workspace = getService("HttpService"), getService("Workspace")
+
+local function sleep(s)
+  if type(task) == "table" and type(task.wait) == "function" then task.wait(s or 0)
+  elseif type(wait) == "function" then wait(s or 0) end
+end
+local function spawn(fn, ...)
+  if type(task) == "table" and type(task.spawn) == "function" then return task.spawn(fn, ...) end
+  local co = coroutine.create(fn)
+  coroutine.resume(co, ...)
+  return co
+end
+local function delay(t, fn)
+  if type(task) == "table" and type(task.delay) == "function" then return task.delay(t, fn) end
+  spawn(function() sleep(t) fn() end)
+end
+local function safe(fn, ...)
+  local ok, a = pcall(fn, ...)
+  return ok, a
+end
+M.sleep, M.spawn, M.delay, M.safe = sleep, spawn, delay, safe
+
+--------------------------------------------------------------
+-- Base64
+--------------------------------------------------------------
+local B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+local B64MAP = {}
+for i = 1, #B64 do B64MAP[B64:sub(i, i)] = i - 1 end
+
+local function b64encode(data)
+  local out = {}
+  for i = 1, #data, 3 do
+    local b1, b2, b3 = data:byte(i, i + 2)
+    local v = (b1 or 0) * 65536 + (b2 or 0) * 256 + (b3 or 0)
+    local c1 = math.floor(v / 262144) % 64
+    local c2 = math.floor(v / 4096) % 64
+    local c3 = math.floor(v / 64) % 64
+    local c4 = v % 64
+    out[#out + 1] = B64:sub(c1 + 1, c1 + 1) .. B64:sub(c2 + 1, c2 + 1)
+    out[#out + 1] = (b2 and B64:sub(c3 + 1, c3 + 1)) or "="
+    out[#out + 1] = (b3 and B64:sub(c4 + 1, c4 + 1)) or "="
+  end
+  return table.concat(out)
+end
+
+local function b64decode(data)
+  data = data:gsub("%s+", "")
+  local out, buf, bits = {}, 0, 0
+  for i = 1, #data do
+    local v = B64MAP[data:sub(i, i)]
+    if v then
+      buf = buf * 64 + v
+      bits = bits + 6
+      if bits >= 8 then
+        bits = bits - 8
+        out[#out + 1] = string.char(math.floor(buf / (2 ^ bits)) % 256)
+        buf = buf % (2 ^ bits)
+      end
+    end
+  end
+  return table.concat(out)
+end
+M.b64encode, M.b64decode = b64encode, b64decode
+
+--------------------------------------------------------------
+-- JSON
+--------------------------------------------------------------
+local function jsonEscape(s)
+  s = tostring(s)
+  s = s:gsub("\\", "\\\\"):gsub('"', '\\"')
+  s = s:gsub("\n", "\\n"):gsub("\r", "\\r"):gsub("\t", "\\t")
+  s = s:gsub("[\1-\31]", function(c) return string.format("\\u%04x", string.byte(c)) end)
+  return s
+end
+
+local function jsonEncode(v)
+  local t = type(v)
+  if v == nil then return "null" end
+  if t == "boolean" then return tostring(v) end
+  if t == "number" then
+    if v == math.floor(v) and math.abs(v) < 1e15 then return string.format("%d", v) end
+    return string.format("%.14g", v)
+  end
+  if t == "string" then return '"' .. jsonEscape(v) .. '"' end
+  if t == "table" then
+    local count, max, isArray = 0, 0, true
+    for k in pairs(v) do
+      if type(k) ~= "number" then isArray = false break end
+      count = count + 1
+      if k > max then max = k end
+    end
+    if isArray and count == max then
+      local parts = {}
+      for i = 1, max do parts[i] = jsonEncode(v[i]) end
+      return "[" .. table.concat(parts, ",") .. "]"
+    end
+    local keys = {}
+    for k in pairs(v) do keys[#keys + 1] = tostring(k) end
+    table.sort(keys)
+    local parts = {}
+    for _, k in ipairs(keys) do
+      local val = v[k]
+      if val == nil then val = v[tonumber(k) or 0] end
+      parts[#parts + 1] = '"' .. jsonEscape(k) .. '":' .. jsonEncode(val)
+    end
+    return "{" .. table.concat(parts, ",") .. "}"
+  end
+  return "null"
+end
+
+local function jsonDecode(str)
+  if type(str) ~= "string" then return nil end
+  local pos, len = 1, #str
+  local function skipWs()
+    while pos <= len do
+      local c = str:sub(pos, pos)
+      if c == " " or c == "\t" or c == "\n" or c == "\r" then pos = pos + 1 else break end
+    end
+  end
+  local function utf8Char(cp)
+    if cp < 0x80 then return string.char(cp)
+    elseif cp < 0x800 then return string.char(192 + math.floor(cp / 64), 128 + (cp % 64))
+    elseif cp < 0x10000 then
+      return string.char(224 + math.floor(cp / 4096), 128 + (math.floor(cp / 64) % 64), 128 + (cp % 64))
+    end
+    return string.char(240 + math.floor(cp / 262144), 128 + (math.floor(cp / 4096) % 64),
+      128 + (math.floor(cp / 64) % 64), 128 + (cp % 64))
+  end
+  local function parseString()
+    pos = pos + 1
+    local buf = {}
+    while pos <= len do
+      local c = str:sub(pos, pos)
+      if c == '"' then pos = pos + 1 break end
+      if c == "\\" then
+        pos = pos + 1
+        local e = str:sub(pos, pos)
+        pos = pos + 1
+        if e == "n" then buf[#buf + 1] = "\n"
+        elseif e == "t" then buf[#buf + 1] = "\t"
+        elseif e == "r" then buf[#buf + 1] = "\r"
+        elseif e == "b" then buf[#buf + 1] = "\b"
+        elseif e == "f" then buf[#buf + 1] = "\f"
+        elseif e == "/" then buf[#buf + 1] = "/"
+        elseif e == "\\" then buf[#buf + 1] = "\\"
+        elseif e == '"' then buf[#buf + 1] = '"'
+        elseif e == "u" then
+          local hex = str:sub(pos, pos + 3)
+          pos = pos + 4
+          local cp = tonumber(hex, 16) or 63
+          if cp >= 0xD800 and cp <= 0xDBFF and str:sub(pos, pos + 1) == "\\u" then
+            local lo = tonumber(str:sub(pos + 2, pos + 5), 16)
+            if lo and lo >= 0xDC00 and lo <= 0xDFFF then
+              cp = 0x10000 + (cp - 0xD800) * 0x400 + (lo - 0xDC00)
+              pos = pos + 6
+            end
+          end
+          buf[#buf + 1] = utf8Char(cp)
+        else
+          buf[#buf + 1] = e
+        end
+      else
+        buf[#buf + 1] = c
+        pos = pos + 1
+      end
+    end
+    return table.concat(buf)
+  end
+  local function parseNumber()
+    local s = pos
+    while pos <= len do
+      local c = str:sub(pos, pos)
+      if c:match("[%d%+%-%.eE]") then pos = pos + 1 else break end
+    end
+    return tonumber(str:sub(s, pos - 1))
+  end
+  local parseValue
+  local function parseArray()
+    local arr = {}
+    pos = pos + 1
+    skipWs()
+    if str:sub(pos, pos) == "]" then pos = pos + 1 return arr end
+    while pos <= len do
+      arr[#arr + 1] = parseValue()
+      skipWs()
+      local c = str:sub(pos, pos)
+      if c == "," then pos = pos + 1
+      elseif c == "]" then pos = pos + 1 break
+      else break end
+    end
+    return arr
+  end
+  local function parseObject()
+    local obj = {}
+    pos = pos + 1
+    skipWs()
+    if str:sub(pos, pos) == "}" then pos = pos + 1 return obj end
+    while pos <= len do
+      skipWs()
+      if str:sub(pos, pos) ~= '"' then break end
+      local key = parseString()
+      skipWs()
+      if str:sub(pos, pos) == ":" then pos = pos + 1 end
+      obj[key] = parseValue()
+      skipWs()
+      local c = str:sub(pos, pos)
+      if c == "," then pos = pos + 1
+      elseif c == "}" then pos = pos + 1 break
+      else break end
+    end
+    return obj
+  end
+  parseValue = function()
+    skipWs()
+    if pos > len then return nil end
+    local c = str:sub(pos, pos)
+    if c == "{" then return parseObject() end
+    if c == "[" then return parseArray() end
+    if c == '"' then return parseString() end
+    if str:sub(pos, pos + 3) == "true" then pos = pos + 4 return true end
+    if str:sub(pos, pos + 4) == "false" then pos = pos + 5 return false end
+    if str:sub(pos, pos + 3) == "null" then pos = pos + 4 return nil end
+    return parseNumber()
+  end
+  local ok, res = pcall(parseValue)
+  if not ok then return nil end
+  return res
+end
+M.jsonEncode, M.jsonDecode = jsonEncode, jsonDecode
+
+--------------------------------------------------------------
+-- Metin yardımcıları
+--------------------------------------------------------------
+function M.pad(id) return string.format("%09d", id) end
+function M.num(v) return tonumber(v) or 0 end
+function M.trim(s) return ((tostring(s or "")):match("^%s*(.-)%s*$")) end
+
+function M.ulen(s)
+  s = tostring(s or "")
+  if type(utf8) == "table" and type(utf8.len) == "function" then
+    local ok, n = pcall(utf8.len, s)
+    if ok and n then return n end
+  end
+  return #s
+end
+
+function M.cleanText(s, maxChars)
+  s = tostring(s or "")
+  s = s:gsub("%c", " ")
+  if type(utf8) == "table" and type(utf8.len) == "function" then
+    local ok, n = pcall(utf8.len, s)
+    if not ok or not n then s = s:gsub("[\128-\255]", "?") end
+    if maxChars and M.ulen(s) > maxChars then
+      local okO, cut = pcall(utf8.offset, s, maxChars + 1)
+      if okO and cut then s = s:sub(1, cut - 1) end
+    end
+  elseif maxChars and #s > maxChars then
+    s = s:sub(1, maxChars)
+  end
+  return s
+end
+
+function M.cleanCode(s)
+  s = tostring(s or "")
+  s = s:gsub("\239\187\191", "")
+  s = s:gsub("\226\128[\139-\141]", "")
+  s = s:gsub("\226\129\160", "")
+  s = s:gsub("\194\160", " ")
+  s = s:gsub("\r\n?", "\n")
+  return s
+end
+
+function M.fixQuotes(s)
+  s = s:gsub("\226\128[\156\157]", '"')
+  s = s:gsub("\226\128[\152\153]", "'")
+  return s
+end
+
+function M.shortErr(e)
+  e = tostring(e)
+  e = e:gsub('^%[string ".-"%]:', "satir ")
+  return e:sub(1, 90)
+end
+
+function M.fmtTime(sec)
+  if sec < 0 then sec = 0 end
+  local h, m, s = math.floor(sec / 3600), math.floor((sec % 3600) / 60), math.floor(sec % 60)
+  if h > 0 then return string.format("%d:%02d:%02d", h, m, s) end
+  return string.format("%02d:%02d", m, s)
+end
+
+function M.userId()
+  local ok, id = pcall(function() return Players.LocalPlayer.UserId end)
+  return (ok and tonumber(id)) or 0
+end
+
+--------------------------------------------------------------
+-- Okuma (herkese açık, anahtarsız)
+--------------------------------------------------------------
+function M.httpGet(url)
+  local sep = url:find("?", 1, true) and "&" or "?"
+  local ok, r = pcall(function() return game:HttpGet(url .. sep .. "t=" .. tostring(os.time())) end)
+  if ok and type(r) == "string" and #r > 0 and r:sub(1, 14) ~= "404: Not Found" then return r end
+  return nil
+end
+
+function M.readIndex()
+  local src = M.httpGet(STORE .. INDEX_FILE)
+  if not src then return { next = 1, scripts = {} } end
+  local d = jsonDecode(src)
+  if type(d) == "table" then
+    if type(d.scripts) ~= "table" then d.scripts = {} end
+    return d
+  end
+  return { next = 1, scripts = {} }
+end
+
+function M.fetchLoad(url)
+  local src = M.httpGet(url)
+  if not src then return false, "indirilemedi" end
+  if #((src:gsub("%s+", ""))) == 0 then return false, "bos dosya" end
+  if type(loadstring) ~= "function" then return false, "loadstring yok" end
+  local fn, cerr = loadstring(src)
+  if not fn then
+    local ln = tonumber(tostring(cerr):match(":(%d+):"))
+    local n, txt = 0, ""
+    for line in (src .. "\n"):gmatch("(.-)\n") do
+      n = n + 1
+      if n == ln then txt = line break end
+    end
+    print("[hubcore] derleme hatasi " .. tostring(cerr) .. " | satir: " .. txt:sub(1, 120))
+    return false, "L" .. tostring(ln) .. ": " .. txt:sub(1, 50)
+  end
+  local okR, mod = pcall(fn)
+  if not okR then return false, tostring(mod) end
+  return true, mod
+end
+
+--------------------------------------------------------------
+-- İstatistik + günlük limit (sahiplik: entry.owner == UserId)
+--------------------------------------------------------------
+-- Bugün (UTC) yayınladıysa, yeni yayın hakkına kalan saniye; hakkı varsa 0
+function M.dailyLeft(uid, idx)
+  local now = os.time()
+  local day = math.floor(now / 86400)
+  for _, e in ipairs((idx and idx.scripts) or {}) do
+    if tonumber(e.owner) == uid and math.floor(M.num(e.created) / 86400) == day then
+      return (day + 1) * 86400 - now
+    end
+  end
+  return 0
+end
+
+function M.statsFor(uid, idx)
+  local st = { count = 0, uses = 0, good = 0, bad = 0, mine = {}, best = nil, rank = nil, authors = 0, last = 0 }
+  local byOwner = {}
+  for _, e in ipairs(idx.scripts or {}) do
+    local ow = tonumber(e.owner)
+    if ow then
+      byOwner[ow] = (byOwner[ow] or 0) + M.num(e.uses)
+      if ow == uid then
+        st.count = st.count + 1
+        st.uses = st.uses + M.num(e.uses)
+        st.good = st.good + M.num(e.good)
+        st.bad = st.bad + M.num(e.bad)
+        st.mine[#st.mine + 1] = e
+        if M.num(e.created) > st.last then st.last = M.num(e.created) end
+        if not st.best or (M.num(e.good) - M.num(e.bad)) > (M.num(st.best.good) - M.num(st.best.bad)) then st.best = e end
+      end
+    end
+  end
+  table.sort(st.mine, function(a, b) return M.num(a.id) > M.num(b.id) end)
+  local mineUses, better, total = byOwner[uid] or 0, 0, 0
+  for _, v in pairs(byOwner) do
+    total = total + 1
+    if v > mineUses then better = better + 1 end
+  end
+  st.authors = total
+  if st.count > 0 then st.rank = better + 1 end
+  return st
+end
+
+--------------------------------------------------------------
+-- HTTP (zaman aşımlı, birden çok yedek)
+--------------------------------------------------------------
+local function callTimeout(fn, timeout)
+  local box = { done = false }
+  spawn(function()
+    local ok, a = pcall(fn)
+    box.ok, box.a = ok, a
+    box.done = true
+  end)
+  local waited = 0
+  while not box.done and waited < timeout do
+    sleep(0.05)
+    waited = waited + 0.05
+  end
+  if not box.done then return nil, "zaman asimi" end
+  if not box.ok then return nil, tostring(box.a) end
+  return box.a
+end
+
+-- Dönüş: durumKodu, govde | nil, hata ("no_req" = hiç yöntem yok)
+local function req(url, method, body, headers)
+  method = method or "GET"
+  local providers = {}
+  if type(request) == "function" then
+    providers[#providers + 1] = function() return request({ Url = url, Method = method, Headers = headers, Body = body }) end
+  end
+  if type(http_request) == "function" then
+    providers[#providers + 1] = function() return http_request({ Url = url, Method = method, Headers = headers, Body = body }) end
+  end
+  if type(syn) == "table" and type(syn.request) == "function" then
+    providers[#providers + 1] = function() return syn.request({ Url = url, Method = method, Headers = headers, Body = body }) end
+  end
+  if HttpService then
+    providers[#providers + 1] = function() return HttpService:RequestAsync({ Url = url, Method = method, Headers = headers, Body = body }) end
+  end
+  if #providers == 0 then return nil, "no_req" end
+  local lastErr = "bilinmeyen hata"
+  for _, p in ipairs(providers) do
+    local res, err = callTimeout(p, 25)
+    if type(res) == "table" then
+      local code = tonumber(res.StatusCode or res.Status or res.status_code or res.code) or 0
+      local txt = res.Body or res.body or res.Content or ""
+      if code > 0 then return code, tostring(txt) end
+      lastErr = "gecersiz yanit"
+    else
+      lastErr = tostring(err or "yanit yok")
+    end
+  end
+  return nil, lastErr
+end
+M.req = req
+
+local function ghMsg(body)
+  local d = jsonDecode(body)
+  if type(d) == "table" and type(d.message) == "string" then return d.message:sub(1, 70) end
+  return ""
+end
+M.ghMsg = ghMsg
+
+local ERR = {
+  tr = {
+    no_key = "API anahtarı okunamadı (api-key dosyası boş veya yok).",
+    bad_key = "API anahtarı geçersiz veya yetkisiz.",
+    no_repo = "roblox-game-star deposu bulunamadı veya anahtarın erişimi yok.",
+    no_req = "Executor HTTP isteği (request) desteklemiyor.",
+    net_fail = "Bağlantı hatası", idx_fail = "Index okunamadı",
+    idx_bad = "Index dosyası bozuk görünüyor, üzerine yazılmadı.",
+    conflict = "Çakışma, tekrar dene.", write_fail = "Dosya yazılamadı",
+    not_found = "Script bulunamadı.", not_owner = "Bu script sana ait değil.",
+  },
+  en = {
+    no_key = "Could not read the API key (api-key file is empty or missing).",
+    bad_key = "API key is invalid or lacks permission.",
+    no_repo = "The roblox-game-star repo was not found or the key has no access.",
+    no_req = "Executor does not support HTTP requests (request).",
+    net_fail = "Connection error", idx_fail = "Could not read index",
+    idx_bad = "Index file looks corrupted, it was not overwritten.",
+    conflict = "Conflict, try again.", write_fail = "Could not write file",
+    not_found = "Script not found.", not_owner = "This script is not yours.",
+  },
+}
+function M.E(lang, k) return (ERR[lang] or ERR.tr)[k] or ERR.tr[k] or k end
+
+--------------------------------------------------------------
+-- API anahtarı (loadsystem/api-key, ters yazılmış)
+--------------------------------------------------------------
+local function looksLikeToken(s)
+  return s:match("^github_pat_") ~= nil or s:match("^gh[pousr]_") ~= nil
+end
+
+function M.readKeys()
+  local ok, src = pcall(function() return game:HttpGet(BASE .. "api-key?t=" .. tostring(os.time())) end)
+  if not ok or type(src) ~= "string" or src:sub(1, 14) == "404: Not Found" then return {} end
+  src = src:gsub("\239\187\191", "")
+  local keys = {}
+  for line in (src .. "\n"):gmatch("(.-)\n") do
+    line = M.trim(line)
+    if line ~= "" and line:sub(1, 1) ~= "#" then
+      line = line:gsub("[\"'`]", "")
+      line = line:gsub("%s+", "")
+      local key
+      if line:sub(1, 4) == "b64:" then
+        key = b64decode(line:sub(5))
+      else
+        if line:sub(1, 4) == "rev:" then line = line:sub(5) end
+        local reversed = line:reverse()
+        if looksLikeToken(reversed) or not looksLikeToken(line) then key = reversed else key = line end
+      end
+      key = M.trim(key)
+      key = key:gsub("^[Bb][Ee][Aa][Rr][Ee][Rr]:?%s*", "")
+      key = key:gsub("^[Tt][Oo][Kk][Ee][Nn]:?%s*", "")
+      key = key:gsub("%s+", "")
+      if #key >= 20 then keys[#keys + 1] = key end
+    end
+  end
+  return keys
+end
+
+function M.headers(key)
+  return {
+    ["Accept"] = "application/vnd.github+json", ["X-GitHub-Api-Version"] = "2022-11-28",
+    ["User-Agent"] = "loadsystem-lua", ["Authorization"] = "Bearer " .. key,
+    ["Content-Type"] = "application/json",
+  }
+end
+
+-- fn(h) -> ok, sonuc, yetkiHatasi. Yetki hatasında sıradaki anahtar denenir.
+function M.withKeys(lang, fn)
+  local keys = M.readKeys()
+  if #keys == 0 then return false, M.E(lang, "no_key") end
+  local ok, res = false, M.E(lang, "bad_key")
+  for _, k in ipairs(keys) do
+    local o, r, auth = fn(M.headers(k))
+    ok, res = o, r
+    if o or not auth then break end
+  end
+  return ok, res
+end
+
+local function netErr(lang, b)
+  if b == "no_req" then return M.E(lang, "no_req") end
+  return M.E(lang, "net_fail") .. " (" .. tostring(b):sub(1, 60) .. ")"
+end
+M.netErr = netErr
+
+-- index'i oku -> fn(idx, h) değiştirir -> geri yaz. 409/422'de yeniden dener.
+-- fn: true, sonuc | false, mesaj, yetkiHatasi
+function M.mutateIndex(fn, lang)
+  local function E(k) return M.E(lang, k) end
+  return M.withKeys(lang, function(h)
+    for _ = 1, 4 do
+      local c, b = req(API .. INDEX_FILE .. "?ref=" .. BRANCH .. "&t=" .. tostring(os.time()), "GET", nil, h)
+      if not c then return false, netErr(lang, b) end
+      local idx, sha = { next = 1, scripts = {} }, nil
+      if c == 200 then
+        local j = jsonDecode(b)
+        if type(j) ~= "table" or not j.sha then return false, E("idx_fail") end
+        sha = j.sha
+        local raw = b64decode(tostring(j.content or ""))
+        if M.trim(raw) ~= "" then
+          local p = jsonDecode(raw)
+          if type(p) ~= "table" then return false, E("idx_bad") end
+          if p.scripts == nil then p.scripts = {} end
+          if type(p.scripts) ~= "table" then return false, E("idx_bad") end
+          idx = p
+        end
+      elseif c == 401 or c == 403 then
+        return false, E("bad_key") .. " [" .. ghMsg(b) .. "]", true
+      elseif c == 404 then
+        local cr = req(REPO_API, "GET", nil, h)
+        if cr == 404 then return false, E("no_repo"), true end
+        if cr == 401 or cr == 403 then return false, E("bad_key"), true end
+      else
+        return false, E("idx_fail") .. " (HTTP " .. tostring(c) .. ")"
+      end
+
+      local ok, res, auth = fn(idx, h)
+      if not ok then return false, res, auth end
+
+      local payload = { message = "hub: index", content = b64encode(jsonEncode(idx)), branch = BRANCH }
+      if sha then payload.sha = sha end
+      local ci, bi = req(API .. INDEX_FILE, "PUT", jsonEncode(payload), h)
+      if not ci then return false, netErr(lang, bi) end
+      if ci == 200 or ci == 201 then return true, res end
+      if ci == 401 or ci == 403 then return false, E("bad_key") .. " [" .. ghMsg(bi) .. "]", true end
+      if ci ~= 409 and ci ~= 422 then return false, E("idx_fail") .. " (HTTP " .. tostring(ci) .. ") " .. ghMsg(bi) end
+      sleep(0.6)
+    end
+    return false, E("conflict")
+  end)
+end
+
+-- Var olan veya yeni dosyayı yaz (sha otomatik)
+function M.putFile(name, content, msg, lang)
+  return M.withKeys(lang, function(h)
+    for _ = 1, 4 do
+      local c, b = req(API .. name .. "?ref=" .. BRANCH .. "&t=" .. tostring(os.time()), "GET", nil, h)
+      if not c then return false, netErr(lang, b) end
+      local sha
+      if c == 200 then
+        local j = jsonDecode(b)
+        sha = type(j) == "table" and j.sha or nil
+      elseif c == 401 or c == 403 then
+        return false, M.E(lang, "bad_key"), true
+      elseif c ~= 404 then
+        return false, M.E(lang, "write_fail") .. " (HTTP " .. tostring(c) .. ")"
+      end
+      local p = { message = msg, content = b64encode(content), branch = BRANCH }
+      if sha then p.sha = sha end
+      local cw, bw = req(API .. name, "PUT", jsonEncode(p), h)
+      if not cw then return false, netErr(lang, bw) end
+      if cw == 200 or cw == 201 then return true end
+      if cw == 401 or cw == 403 then return false, M.E(lang, "bad_key"), true end
+      if cw ~= 409 and cw ~= 422 then return false, M.E(lang, "write_fail") .. " (HTTP " .. tostring(cw) .. ") " .. ghMsg(bw) end
+      sleep(0.7)
+    end
+    return false, M.E(lang, "conflict")
+  end)
+end
+
+function M.deleteFile(name, msg, lang)
+  return M.withKeys(lang, function(h)
+    for _ = 1, 3 do
+      local c, b = req(API .. name .. "?ref=" .. BRANCH .. "&t=" .. tostring(os.time()), "GET", nil, h)
+      if not c then return false, netErr(lang, b) end
+      if c == 404 then return true end
+      if c == 401 or c == 403 then return false, M.E(lang, "bad_key"), true end
+      if c ~= 200 then return false, M.E(lang, "write_fail") .. " (HTTP " .. tostring(c) .. ")" end
+      local j = jsonDecode(b)
+      local cd, bd = req(API .. name, "DELETE", jsonEncode({ message = msg, sha = j and j.sha, branch = BRANCH }), h)
+      if not cd then return false, netErr(lang, bd) end
+      if cd == 200 then return true end
+      if cd == 401 or cd == 403 then return false, M.E(lang, "bad_key"), true end
+      if cd ~= 409 and cd ~= 422 then return false, M.E(lang, "write_fail") .. " (HTTP " .. tostring(cd) .. ") " .. ghMsg(bd) end
+      sleep(0.6)
+    end
+    return false, M.E(lang, "conflict")
+  end)
+end
+
+--------------------------------------------------------------
+-- Arayüz araçları
+--------------------------------------------------------------
+local C = {
+  bg = Color3.fromRGB(9, 10, 14), bgTop = Color3.fromRGB(19, 21, 31), panel = Color3.fromRGB(13, 15, 20),
+  card = Color3.fromRGB(22, 25, 33), cardHi = Color3.fromRGB(31, 35, 46), line = Color3.fromRGB(38, 42, 53),
+  text = Color3.fromRGB(240, 242, 247), muted = Color3.fromRGB(144, 149, 165), faint = Color3.fromRGB(98, 103, 120),
+  ok = Color3.fromRGB(34, 197, 94), danger = Color3.fromRGB(239, 68, 68), white = Color3.fromRGB(255, 255, 255),
+}
+local FNT = { reg = Enum.Font.Gotham, med = Enum.Font.GothamMedium, bold = Enum.Font.GothamBold }
+local AL = Enum.TextXAlignment.Left
+M.C, M.FNT = C, FNT
+
+local function new(class, props, parent)
+  local ok, o = pcall(function() return Instance.new(class) end)
+  if not ok or not o then return nil end
+  if props then for k, v in pairs(props) do safe(function() o[k] = v end) end end
+  if parent then safe(function() o.Parent = parent end) end
+  return o
+end
+local function round(o, r) if o then new("UICorner", { CornerRadius = UDim.new(0, r or 12) }, o) end end
+local function stroke(o, col) if o then new("UIStroke", { ApplyStrokeMode = Enum.ApplyStrokeMode.Border, Color = col, Thickness = 1 }, o) end end
+M.new, M.round, M.stroke = new, round, stroke
+
+-- Ortak pencere. o: name, title, sub, back, backText, w, h, order, noMin
+-- Dönüş: u (gui, window, bg, toast, loading, pill, label, input, scroll, backBtn, xBtn, close, alive ...)
+function M.ui(ctx, o)
+  ctx, o = ctx or {}, o or {}
+  local u = { C = C, FNT = FNT, new = new, round = round, stroke = stroke }
+  local accent = ctx.accent or Color3.fromRGB(88, 101, 242)
+  local accentHi = accent:Lerp(Color3.new(1, 1, 1), 0.18)
+  local animOn = ctx.anim ~= false
+  u.accent, u.accentHi = accent, accentHi
+  local name = o.name or "Panel"
+  S.GUIS = S.GUIS or {}
+  safe(function() if S.GUIS[name] then S.GUIS[name]:Destroy() end end)
+
+  local gui = new("ScreenGui", {
+    Name = "LoadSystem" .. name, ResetOnSpawn = false, IgnoreGuiInset = true, DisplayOrder = o.order or 800,
+    ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+  })
+  if not gui then return nil end
+  local attached = false
+  if CoreGui then attached = pcall(function() gui.Parent = CoreGui end) and gui.Parent == CoreGui end
+  if not attached then pcall(function() gui.Parent = Players.LocalPlayer:WaitForChild("PlayerGui") end) end
+  S.GUIS[name] = gui
+  u.gui = gui
+
+  local alive = true
+  u.locked = false
+  function u.alive() return alive end
+
+  local function tw(obj, goal, t)
+    if not obj then return end
+    if animOn and TweenService then
+      local ok = pcall(function()
+        TweenService:Create(obj, TweenInfo.new(t or 0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), goal):Play()
+      end)
+      if ok then return end
+    end
+    for k, v in pairs(goal) do safe(function() obj[k] = v end) end
+  end
+  u.tw = tw
+
+  function u.label(parent, text, x, y, w, h, size, font, color, extra)
+    local p = {
+      Size = UDim2.fromOffset(w, h), Position = UDim2.fromOffset(x, y), BackgroundTransparency = 1,
+      Text = text, TextColor3 = color or C.text, TextSize = size or 12, Font = font or FNT.reg,
+      TextXAlignment = AL, ZIndex = 4,
+    }
+    if extra then for k, v in pairs(extra) do p[k] = v end end
+    return new("TextLabel", p, parent)
+  end
+
+  local bg = new("Frame", {
+    Size = UDim2.fromScale(1, 1), BackgroundColor3 = C.bg, BackgroundTransparency = (ctx.bg == false) and 0 or 1,
+    BorderSizePixel = 0, ZIndex = 0,
+  }, gui)
+  new("UIGradient", { Color = ColorSequence.new(C.bgTop, C.bg), Rotation = 150 }, bg)
+  u.bg = bg
+
+  local W, H, PAD = o.w or 880, o.h or 520, 28
+  u.W, u.H, u.PAD, u.IW = W, H, PAD, W - PAD * 2
+  local window = new("Frame", {
+    Size = UDim2.fromOffset(W, H), AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5),
+    BackgroundColor3 = C.panel, BorderSizePixel = 0, ZIndex = 2,
+  }, bg)
+  round(window, 18)
+  stroke(window, C.line)
+  u.window = window
+  local uiScale = new("UIScale", { Scale = 1 }, window)
+  local function fit()
+    local vp = Vector2.new(1280, 720)
+    safe(function() local cam = Workspace.CurrentCamera if cam then vp = cam.ViewportSize end end)
+    local s = math.min((vp.X - 24) / W, (vp.Y - 24) / H, 1)
+    if s <= 0 then s = 1 end
+    safe(function() uiScale.Scale = math.max(0.35, s) end)
+  end
+  fit()
+  local camConn
+  safe(function() camConn = Workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(fit) end)
+
+  function u.close()
+    alive = false
+    safe(function() if camConn then camConn:Disconnect() end end)
+    safe(function() gui:Destroy() end)
+    if S.GUIS[name] == gui then S.GUIS[name] = nil end
+  end
+
+  -- Bildirim (2 satır)
+  local toastF = new("Frame", {
+    Size = UDim2.fromOffset(math.min(620, W - 40), 56), AnchorPoint = Vector2.new(0.5, 1),
+    Position = UDim2.new(0.5, 0, 1, 90), BackgroundColor3 = C.cardHi, BorderSizePixel = 0, Visible = false, ZIndex = 60,
+  }, window)
+  round(toastF, 16)
+  stroke(toastF, C.line)
+  local toastDot = new("Frame", {
+    Size = UDim2.fromOffset(8, 8), Position = UDim2.fromOffset(18, 24), BackgroundColor3 = C.muted, BorderSizePixel = 0, ZIndex = 61,
+  }, toastF)
+  round(toastDot, 4)
+  local toastT = u.label(toastF, "", 36, 4, math.min(620, W - 40) - 52, 48, 12, FNT.med, C.text, { ZIndex = 61, TextWrapped = true })
+  local toastTok = 0
+  function u.toast(text, color, dur)
+    toastTok = toastTok + 1
+    local my = toastTok
+    safe(function()
+      toastT.Text = tostring(text or "")
+      toastDot.BackgroundColor3 = color or C.muted
+      toastF.Visible = true
+    end)
+    tw(toastF, { Position = UDim2.new(0.5, 0, 1, -18) }, 0.3)
+    delay(dur or 5, function()
+      if my ~= toastTok or not alive then return end
+      tw(toastF, { Position = UDim2.new(0.5, 0, 1, 90) }, 0.3)
+    end)
+  end
+
+  -- Tam ekran yükleniyor
+  local ov = new("Frame", {
+    Size = UDim2.fromScale(1, 1), BackgroundColor3 = Color3.fromRGB(0, 0, 0), BorderSizePixel = 0,
+    Visible = false, Active = true, ZIndex = 200,
+  }, gui)
+  local ovTitle = new("TextLabel", {
+    Size = UDim2.fromOffset(900, 56), Position = UDim2.fromScale(0.5, 0.45), AnchorPoint = Vector2.new(0.5, 0.5),
+    BackgroundTransparency = 1, Text = "", TextColor3 = C.white, TextSize = 32, Font = FNT.bold, ZIndex = 201,
+  }, ov)
+  local ovSub = new("TextLabel", {
+    Size = UDim2.fromOffset(900, 24), Position = UDim2.fromScale(0.5, 0.52), AnchorPoint = Vector2.new(0.5, 0.5),
+    BackgroundTransparency = 1, Text = "", TextColor3 = Color3.fromRGB(150, 152, 158), TextSize = 13, Font = FNT.med, ZIndex = 201,
+  }, ov)
+  local barBg = new("Frame", {
+    Size = UDim2.fromOffset(280, 4), Position = UDim2.fromScale(0.5, 0.6), AnchorPoint = Vector2.new(0.5, 0.5),
+    BackgroundColor3 = Color3.fromRGB(40, 42, 48), BorderSizePixel = 0, ZIndex = 201,
+  }, ov)
+  local bar = new("Frame", { Size = UDim2.fromOffset(0, 4), BackgroundColor3 = accent, BorderSizePixel = 0, ZIndex = 202 }, barBg)
+  local barTween
+  -- determinate=true: çubuk loadingInfo(sub, 0..1) ile ilerler (kendi kendine dönmez)
+  function u.loading(show, title, sub, determinate)
+    safe(function()
+      if barTween then barTween:Cancel() barTween = nil end
+      if show then
+        ovTitle.Text, ovSub.Text = tostring(title or ""), tostring(sub or "")
+        bar.Size = UDim2.fromOffset(0, 4)
+        ov.Visible = true
+        if not determinate and TweenService then
+          barTween = TweenService:Create(bar, TweenInfo.new(1.1, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
+            { Size = UDim2.fromOffset(280, 4) })
+          barTween:Play()
+        end
+      else
+        ov.Visible = false
+      end
+    end)
+  end
+  function u.loadingInfo(sub, p)
+    safe(function()
+      if sub then ovSub.Text = tostring(sub) end
+      if p then bar.Size = UDim2.fromOffset(math.floor(280 * math.max(0, math.min(1, p))), 4) end
+    end)
+  end
+
+  -- Düğme. fill: true = vurgu rengi, Color3 = o renk, yoksa kart rengi
+  function u.pill(text, x, y, w, h, fill, parent)
+    local base, hi
+    if fill == true then base, hi = accent, accentHi
+    elseif typeof(fill) == "Color3" then base, hi = fill, fill:Lerp(Color3.new(1, 1, 1), 0.15)
+    else base, hi = C.card, C.cardHi end
+    local b = new("TextButton", {
+      Size = UDim2.fromOffset(w, h), Position = UDim2.fromOffset(x, y), BackgroundColor3 = base, BorderSizePixel = 0,
+      Text = text, TextColor3 = fill and C.white or C.text, TextSize = 12, Font = FNT.bold, AutoButtonColor = false, ZIndex = 4,
+    }, parent or window)
+    round(b, 10)
+    if not fill then stroke(b, C.line) end
+    b.MouseEnter:Connect(function() tw(b, { BackgroundColor3 = hi }, 0.12) end)
+    b.MouseLeave:Connect(function() tw(b, { BackgroundColor3 = base }, 0.12) end)
+    return b
+  end
+
+  function u.input(y, h, placeholder, multi, parent)
+    local f = new("Frame", {
+      Size = UDim2.fromOffset(u.IW, h), Position = UDim2.fromOffset(PAD, y), BackgroundColor3 = C.card, BorderSizePixel = 0,
+      ClipsDescendants = true, ZIndex = 3,
+    }, parent or window)
+    round(f, 10)
+    stroke(f, C.line)
+    return new("TextBox", {
+      Size = UDim2.new(1, -24, 1, -(multi and 16 or 0)), Position = UDim2.fromOffset(12, multi and 8 or 0),
+      BackgroundTransparency = 1, Text = "", PlaceholderText = placeholder, PlaceholderColor3 = C.faint,
+      TextColor3 = C.text, TextSize = 13, Font = FNT.reg, ClearTextOnFocus = false, MultiLine = multi and true or false,
+      TextWrapped = multi and true or false, TextXAlignment = AL,
+      TextYAlignment = multi and Enum.TextYAlignment.Top or Enum.TextYAlignment.Center, ZIndex = 4,
+    }, f)
+  end
+
+  function u.scroll(x, y, w, h, parent)
+    local sf = new("ScrollingFrame", {
+      Size = UDim2.fromOffset(w, h), Position = UDim2.fromOffset(x, y), BackgroundTransparency = 1, BorderSizePixel = 0,
+      ScrollBarThickness = 3, CanvasSize = UDim2.fromOffset(0, 0),
+      AutomaticCanvasSize = Enum.AutomaticSize.Y, ZIndex = 3,
+    }, parent or window)
+    new("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder }, sf)
+    return sf
+  end
+
+  -- Başlık satırı
+  local tx = PAD
+  if o.back then
+    u.backBtn = u.pill(o.backText or "← GERİ", PAD, 24, 110, 38, false)
+    tx = PAD + 126
+  end
+  if o.sub then
+    u.title = u.label(window, o.title or "", tx, 20, 400, 28, 22, FNT.bold, C.text)
+    u.label(window, o.sub, tx, 48, 440, 16, 12, FNT.reg, C.muted)
+  else
+    u.title = u.label(window, o.title or "", tx, 22, 400, 42, 24, FNT.bold, C.text)
+  end
+  u.xBtn = u.pill("X", W - PAD - 34, 24, 34, 38, false)
+
+  -- X: küçül -> kare -> "CR" logosu -> kenara git. Logoya basınca geri açılır.
+  local minimized = false
+  local hiddenKids = {}
+  local logoBtn = new("TextButton", {
+    Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Text = "CR", TextColor3 = C.white, TextSize = 22,
+    Font = FNT.bold, AutoButtonColor = false, Visible = false, ZIndex = 100,
+  }, window)
+  local function setMin(on)
+    if on == minimized or u.locked then return end
+    minimized = on
+    if on then
+      safe(function() window.ClipsDescendants = true end)
+      tw(window, { Size = UDim2.fromOffset(64, 64), BackgroundColor3 = accent }, 0.3)
+      tw(bg, { BackgroundTransparency = 1 }, 0.3)
+      delay(0.34, function()
+        if not minimized or not alive then return end
+        for _, c in ipairs(window:GetChildren()) do
+          if c ~= logoBtn and c:IsA("GuiObject") then hiddenKids[c] = c.Visible c.Visible = false end
+        end
+        logoBtn.Visible = true
+        tw(window, { Position = UDim2.new(1, -52, 0.5, 0) }, 0.5)
+      end)
+    else
+      logoBtn.Visible = false
+      tw(window, { Position = UDim2.fromScale(0.5, 0.5) }, 0.3)
+      delay(0.32, function()
+        if minimized or not alive then return end
+        tw(window, { Size = UDim2.fromOffset(W, H), BackgroundColor3 = C.panel }, 0.3)
+        tw(bg, { BackgroundTransparency = (ctx.bg == false) and 0 or 1 }, 0.3)
+        delay(0.3, function()
+          if minimized or not alive then return end
+          for c, v in pairs(hiddenKids) do safe(function() c.Visible = v end) end
+          hiddenKids = {}
+          safe(function() window.ClipsDescendants = false end)
+        end)
+      end)
+    end
+  end
+  if not o.noMin then
+    u.xBtn.MouseButton1Click:Connect(function() setMin(true) end)
+    logoBtn.MouseButton1Click:Connect(function() setMin(false) end)
+  end
+
+  return u
+end
+
+S.CORE = M
+return M
