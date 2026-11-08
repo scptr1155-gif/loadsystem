@@ -1,8 +1,6 @@
 # player:OYUNCU_ISMI/playert:TAKMA_AD/password:SIFRE
 # Her satır bir oyuncudur. Parantez kullanmayın, "/" ve boşluk kullanmayın.
 # Kayıt satırı otomatik olarak bu dosyaya eklenir (kayıtta mevcut satırlar korunur).
-player:adadadadadawwsfjhkg/playert:splayer/password:scpstudio
 player:adadadadadawwsfjhkg/playert:scp/password:scpscp
 player:adadadadadawwsfjhkg/playert:scpscp/password:scpscpscp
-player:adadadadadawwsfjhkg/playert:scpsc/password:scpscpscp
 player:adadadadadawwsfjhkg/playert:adminoffical/password:adminadmin123123
