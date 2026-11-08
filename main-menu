@@ -1,7 +1,11 @@
--- main-menu | YÜKLEME SİSTEMİ — ANA MENÜ (v3.3.0)
+-- main-menu | YÜKLEME SİSTEMİ — ANA MENÜ (v3.4.0)
 -- =========================================================
 -- `verify` giriş/kayıt sonrasında bu dosyayı çalıştırır. Arayüz kurulunca
 -- S.MAIN_READY = true olur (verify siyah perdeyi buna göre kaldırır).
+--
+-- v3.4.0:
+-- * Yeni CR CHAT tuşu (OYUNCU ARA'nın yanında): `cr-chat` indirilir, ana menü kapanır, sohbet ekranı açılır.
+--   GERİ tuşu ana menüyü yeniden yükler. Gereken: hubcore v1.2.
 --
 -- v3.3.0:
 -- * SCRIPT HUB tuşunda artık Script Hub logosu var (decal 136958517701160).
@@ -32,16 +36,17 @@ G.__LOADSYS = S
 --------------------------------------------------------------
 local BASE = "https://raw.githubusercontent.com/scptr1155-gif/loadsystem/refs/heads/main/"
 local CONFIG = {
-  VERSION = "3.3.0",
+  VERSION = "3.4.0",
   REPO = "scptr1155-gif/loadsystem",
   START_URL = "",
   RESTART_URL = BASE .. "verify",
   HUB_URL = BASE .. "scripthub",
   SEARCH_URL = BASE .. "search-profile",
+  CHAT_URL = BASE .. "cr-chat",
   MENU_URL = BASE .. "main-menu",
   SETTINGS_FILE = "loadsystem_settings.json",
 }
-local CORE_NEED = "1.1"
+local CORE_NEED = "1.2"
 local LOGO_ID = 136958517701160   -- Script Hub logosu (decal)
 
 local ACCENTS = {
@@ -143,6 +148,7 @@ local STR = {
     f_sys = "Sistem", ready = "Hazır", start = "BAŞLAT", start_d = "Yüklenen scripti çalıştır",
     hub = "SCRIPT HUB", hub_d = "Scriptleri keşfet ve paylaş",
     search = "OYUNCU ARA", ld_search = "OYUNCU ARAMA YÜKLENİYOR",
+    chat = "CR CHAT", ld_chat = "CR CHAT YÜKLENİYOR",
     set_title = "Ayarlar", set_saved = "Tercihlerin bu cihazda saklanır.",
     set_nosave = "Tercihler yalnızca bu oturumda geçerli (executor dosya kaydını desteklemiyor).",
     accent = "Vurgu rengi", accent_d = "Düğmelerde ve işaretlerde kullanılan renk",
@@ -168,6 +174,7 @@ local STR = {
     f_sys = "System", ready = "Ready", start = "START", start_d = "Run the loaded script",
     hub = "SCRIPT HUB", hub_d = "Discover and share scripts",
     search = "FIND PLAYERS", ld_search = "LOADING PLAYER SEARCH",
+    chat = "CR CHAT", ld_chat = "LOADING CR CHAT",
     set_title = "Settings", set_saved = "Your preferences are saved on this device.",
     set_nosave = "Preferences only apply to this session (your executor cannot save files).",
     accent = "Accent color", accent_d = "Color used on buttons and highlights",
@@ -435,7 +442,7 @@ local function build()
   local conns, ambient = {}, {}
   local alive, closing, current = true, false, 0
   local goTo, toast, openModal, closeModal, startScript, doLogout, closeMenu
-  local showLoading, hideLoading, openHubScreen, openSearchScreen
+  local showLoading, hideLoading, openHubScreen, openSearchScreen, openChatScreen
 
   local WIN_W, WIN_H, SIDE_W = 880, 520, 224
   local CW = WIN_W - SIDE_W - 12
@@ -664,7 +671,8 @@ local function build()
   local startBtn = actionButton(home, PAD, 336, BW, 70, "start", "start_d")
   startBtn.MouseButton1Click:Connect(function() if startScript then startScript() end end)
   local hubBtn = actionButton(home, PAD + BW + 12, 336, BW, 70, "hub", "hub_d", true)
-  local searchBtn = actionButton(home, PAD, 418, IW, 46, "search", nil, false)
+  local searchBtn = actionButton(home, PAD, 418, BW, 46, "search", nil, false)
+  local chatBtn = actionButton(home, PAD + BW + 12, 418, BW, 46, "chat", nil, false)
   label(home, CONFIG.REPO, PAD, 474, IW, 16, 11, F.reg, C.faint)
 
   spawn(function()
@@ -1010,8 +1018,10 @@ local function build()
 
   openHubScreen = function() openRemote(CONFIG.HUB_URL, "ld_hub") end
   openSearchScreen = function() openRemote(CONFIG.SEARCH_URL, "ld_search", { onBack = fallbackMenu }) end
+  openChatScreen = function() openRemote(CONFIG.CHAT_URL, "ld_chat", { onBack = fallbackMenu }) end
   hubBtn.MouseButton1Click:Connect(openHubScreen)
   searchBtn.MouseButton1Click:Connect(openSearchScreen)
+  chatBtn.MouseButton1Click:Connect(openChatScreen)
 
   local starting = false
   startScript = function()
@@ -1209,6 +1219,7 @@ local function build()
     riseIn(startBtn, 0.22)
     riseIn(hubBtn, 0.28)
     riseIn(searchBtn, 0.34)
+    riseIn(chatBtn, 0.38)
   else
     fitWindow(false)
   end
