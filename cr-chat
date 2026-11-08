@@ -1,4 +1,4 @@
--- cr-chat | CR CHAT (v1.0)  -> loadsystem deposuna "cr-chat" adıyla yükle
+-- cr-chat | CR CHAT (v1.1)  -> loadsystem deposuna "cr-chat" adıyla yükle
 -- =========================================================
 -- main-menu'deki CR CHAT tuşu veya search-profile'daki MESAJ GÖNDER tuşu bu dosyayı indirir ve
 -- open(ctx) çağırır.
@@ -7,6 +7,11 @@
 --    Aramasız: ARKADAŞLAR sekmesi (GENEL SOHBET + arkadaşlar) ve İSTEKLER sekmesi (kabul / reddet / iptal).
 --  * Sağ: sohbet. Mesajlar birkaç saniyede bir yenilenir. Gönder tuşu veya Enter.
 --  * Veriler roblox-game-star deposunda: friends.json, chat/*.json (hubcore v1.2 içindeki fonksiyonlarla).
+--
+-- v1.1: İYİMSER GÖNDERİM: yazdığın mesaj / arkadaş isteği / kabul / red işlemi HEMEN kendi ekranında görünür,
+--       gerçek gönderim arkada yapılır. Başarısız olursa mesaj kırmızı olur (dokun: tekrar dene, ✕: sil),
+--       arkadaşlık işlemi geri alınır. Karşı taraf gerçek gönderimden sonraki yenilemede görür (birkaç sn).
+--       Sana yeni arkadaşlık isteği gelince bildirim çıkar. Ekranda en fazla 80 mesaj çizilir (oyunu yormaz).
 --
 -- ÖNEMLİ: Sohbet dosyaları herkese açık depoda durur, gizli değildir. Mesajlar GitHub'a yazıldığı
 -- için 1-3 saniye gecikmeli gelir. Gönderen adı istemciden gelir (sahte mesaj mümkündür).
@@ -18,7 +23,7 @@ local S = G.__LOADSYS or {}
 G.__LOADSYS = S
 
 local BASE = "https://raw.githubusercontent.com/scptr1155-gif/loadsystem/refs/heads/main/"
-local NEED = "1.2"
+local NEED = "1.3"
 
 local function loadCore()
   if type(S.CORE) == "table" and S.CORE.version == NEED then return S.CORE end
@@ -45,7 +50,8 @@ local STR = {
     slow = "Çok hızlı yazıyorsun, biraz bekle.", fail = "İşlem başarısız: ", list_fail = "Oyuncu listesi okunamadı.",
     b_add = "ARKADAŞ EKLE", b_accept = "İSTEĞİ KABUL ET", b_remove = "ARKADAŞLIKTAN ÇIK", b_cancel = "İSTEĞİ İPTAL ET",
     t_sent = "Arkadaş isteği gönderildi.", t_friend = "Artık arkadaşsınız.", t_removed = "Kaldırıldı.",
-    you = "sen",
+    you = "sen", sending_tag = "gönderiliyor...", failed_tag = "gönderilemedi — dokun: tekrar dene",
+    new_req = " sana arkadaşlık isteği gönderdi", too_many = "Önceki mesajlar gönderiliyor, biraz bekle.",
   },
   en = {
     back = "← BACK", title = "CR Chat", sub = "Find players, add friends, chat",
@@ -60,13 +66,16 @@ local STR = {
     slow = "You are typing too fast, wait a bit.", fail = "Failed: ", list_fail = "Could not read the player list.",
     b_add = "ADD FRIEND", b_accept = "ACCEPT REQUEST", b_remove = "REMOVE FRIEND", b_cancel = "CANCEL REQUEST",
     t_sent = "Friend request sent.", t_friend = "You are friends now.", t_removed = "Removed.",
-    you = "you",
+    you = "you", sending_tag = "sending...", failed_tag = "failed — tap to retry",
+    new_req = " sent you a friend request", too_many = "Earlier messages are still sending, wait a bit.",
   },
 }
 
 local MAX_TEXT = 200
 local POLL_CHAT = 3      -- sohbet yenileme aralığı (sn)
-local POLL_FRIENDS = 15  -- arkadaş listesi yenileme aralığı (sn)
+local POLL_FRIENDS = 12  -- arkadaş listesi yenileme aralığı (sn)
+local MAX_SHOW = 80      -- ekranda çizilecek en fazla mesaj
+local MAX_PENDING = 6    -- aynı anda bekleyen en fazla gönderilmemiş mesaj
 
 local M = {}
 
@@ -125,6 +134,43 @@ function M.open(ctx)
   local fetching, sending = false, false
   local lastSend = 0
   local renderList, renderMsgs, updateHeader, openDm, openGlobal, refreshFriends, refreshChat
+  local updateTabLabels
+  local pumpQueue
+  local pending, delivered, nextPid = {}, {}, 0      -- gönderilmeyi bekleyen / yeni gönderilmiş mesajlar
+  local overrides = {}                                -- bekleyen arkadaşlık işlemleri (sunucu yetişene kadar ekranda geçerli)
+  local knownIncoming, incInit = {}, false
+  local failStreak = 0
+
+  -- friends.json biçimi: links[a][b] = { s = "p"|"f", from = anahtar, t = zaman }
+  local function setLink(db, a, b, v)
+    if type(db.links) ~= "table" then db.links = {} end
+    if type(db.links[a]) ~= "table" then db.links[a] = {} end
+    if type(db.links[b]) ~= "table" then db.links[b] = {} end
+    db.links[a][b] = v
+    db.links[b][a] = v and { s = v.s, from = v.from, t = v.t } or nil
+  end
+
+  -- Sunucudan okunan listeye, henüz yetişmemiş kendi işlemlerimizi uygular
+  local function applyOverrides(db)
+    if type(db.links) ~= "table" then db.links = {} end
+    if type(db.names) ~= "table" then db.names = {} end
+    for b, o in pairs(overrides) do
+      if os.clock() > o.exp then
+        overrides[b] = nil
+      else
+        local row = db.links[myKey]
+        local cur = type(row) == "table" and row[b] or nil
+        local same = (o.v == false and cur == nil) or (o.v and type(cur) == "table" and cur.s == o.v.s and cur.from == o.v.from)
+        if same then
+          overrides[b] = nil
+        else
+          setLink(db, myKey, b, o.v or nil)
+          db.names[myKey] = myNick
+          if db.names[b] == nil and o.nick then db.names[b] = o.nick end
+        end
+      end
+    end
+  end
 
   ----------------------------------------------------------
   -- SOL: arama + sekmeler + liste
@@ -169,17 +215,55 @@ function M.open(ctx)
   end
 
   local function friendOp(fnName, nick, doneKey)
+    local b = core.nickKey(nick)
+    if b == "" or b == myKey then return end
+    local st = core.friendState(fdb, myNick, nick)
+    local row = fdb.links and fdb.links[myKey]
+    local prev = type(row) == "table" and row[b] or nil
+    local prevCopy = prev and { s = prev.s, from = prev.from, t = prev.t } or nil
+    local v = nil
+    if fnName == "friendRequest" then
+      if st == "friend" then return end
+      if st == "received" then v = { s = "f", from = b, t = os.time() } else v = { s = "p", from = myKey, t = os.time() } end
+    elseif fnName == "friendAccept" then
+      v = { s = "f", from = b, t = os.time() }
+    end
+    -- 1) HEMEN kendi ekranında göster
+    setLink(fdb, myKey, b, v)
+    if type(fdb.names) ~= "table" then fdb.names = {} end
+    fdb.names[myKey] = myNick
+    if fdb.names[b] == nil then fdb.names[b] = nick end
+    overrides[b] = { v = v or false, exp = os.clock() + 25, nick = nick }
+    local okKey = doneKey
+    if fnName == "friendRequest" then okKey = (v and v.s == "f") and "t_friend" or "t_sent" end
+    u.toast(T(okKey), C.ok, 3)
+    updateTabLabels()
+    renderList()
+    updateHeader()
+    -- 2) Gerçek işlem arka planda
     spawn(function()
       local ok, res = core[fnName](myNick, nick, lang)
       if not u.alive() then return end
       if ok then
-        local key = doneKey
-        if fnName == "friendRequest" then key = (res == "friend") and "t_friend" or "t_sent" end
-        u.toast(T(key), C.ok, 3)
+        if fnName == "friendRequest" and res == "friend" and v and v.s == "p" then
+          v = { s = "f", from = b, t = os.time() }
+          setLink(fdb, myKey, b, v)
+          overrides[b] = { v = v, exp = os.clock() + 25, nick = nick }
+          u.toast(T("t_friend"), C.ok, 3)
+          updateTabLabels()
+          renderList()
+          updateHeader()
+        end
+        refreshFriends()
       else
+        -- başarısız: ekrandaki sahte durumu geri al
+        overrides[b] = nil
+        setLink(fdb, myKey, b, prevCopy)
+        updateTabLabels()
+        renderList()
+        updateHeader()
         u.toast(T("fail") .. tostring(res), C.danger, 7)
       end
-      refreshFriends()
     end)
   end
 
@@ -256,7 +340,7 @@ function M.open(ctx)
     end
   end
 
-  local function updateTabLabels()
+  updateTabLabels = function()
     local fl = core.friendList(fdb, myNick)
     tabReq.Text = T("tab_req") .. ((#fl.incoming > 0) and (" (" .. #fl.incoming .. ")") or "")
   end
@@ -321,27 +405,60 @@ function M.open(ctx)
       u.label(mscroll, placeholder, 0, 0, RW, 50, 12, FNT.med, C.faint, { Name = "Msg", TextXAlignment = AC })
       return
     end
-    if #msgs == 0 then
+    -- çizilecekler: sunucudaki son mesajlar + bu sohbetin bekleyen/başarısız mesajları
+    local items = {}
+    local from = math.max(1, #msgs - MAX_SHOW + 1)
+    for i = from, #msgs do
+      local m = msgs[i]
+      items[#items + 1] = { mine = (tostring(m.f) == myKey), n = tostring(m.n or "?"), t = m.t, text = tostring(m.m or "") }
+    end
+    for _, p in ipairs(pending) do
+      if current and p.file == current.file then
+        items[#items + 1] = { mine = true, n = myNick, t = p.t, text = p.text, p = p }
+      end
+    end
+    if #items == 0 then
       u.label(mscroll, T("empty_chat"), 0, 0, RW, 50, 12, FNT.med, C.faint, { Name = "Msg", TextXAlignment = AC })
       return
     end
     local maxBubble = RW - 90
-    for i, m in ipairs(msgs) do
-      local mine = (tostring(m.f) == myKey)
-      local txt = tostring(m.m or "")
+    for i, it in ipairs(items) do
+      local mine, txt = it.mine, it.text
       local th, tw = core.textHeight(txt, 13, FNT.reg, maxBubble - 20)
       local bw = math.max(48, math.min(maxBubble, math.ceil(tw) + 22))
       local bh = math.ceil(th) + 16
       local row = u.new("Frame", {
         Name = "Row", Size = UDim2.fromOffset(RW - 8, 18 + bh), BackgroundTransparency = 1, LayoutOrder = i, ZIndex = 3,
       }, mscroll)
-      local who = mine and T("you") or tostring(m.n or "?")
-      u.label(row, who .. "  ·  " .. hhmm(m.t), 4, 0, RW - 16, 16, 10, FNT.med, C.faint,
+      local who = mine and T("you") or it.n
+      local tag = hhmm(it.t)
+      local failed = it.p and it.p.state == "failed"
+      if it.p then tag = failed and T("failed_tag") or T("sending_tag") end
+      u.label(row, who .. "  ·  " .. tag, 4, 0, RW - 16, 16, 10, FNT.med, failed and C.danger or C.faint,
         { TextXAlignment = mine and AR or ALN, TextTruncate = TRUNC })
-      local bub = u.new("Frame", {
+      local bub = u.new(failed and "TextButton" or "Frame", {
         Size = UDim2.fromOffset(bw, bh), Position = UDim2.fromOffset(mine and (RW - 8 - bw) or 0, 18),
-        BackgroundColor3 = mine and u.accent or C.card, BorderSizePixel = 0, ZIndex = 4,
+        BackgroundColor3 = failed and C.danger or (mine and u.accent or C.card), BorderSizePixel = 0, ZIndex = 4,
+        BackgroundTransparency = (it.p and not failed) and 0.45 or 0,
       }, row)
+      if failed then
+        core.safe(function() bub.Text = ""; bub.AutoButtonColor = false end)
+        bub.MouseButton1Click:Connect(function()
+          if it.p.state == "failed" then
+            it.p.state = "sending"
+            renderMsgs()
+            if pumpQueue then pumpQueue() end
+          end
+        end)
+        local xb = u.pill("✕", RW - 8 - bw - 28, 18 + math.floor((bh - 22) / 2), 22, 22, false, row)
+        xb.TextSize = 11
+        xb.MouseButton1Click:Connect(function()
+          for k, q in ipairs(pending) do
+            if q == it.p then table.remove(pending, k) break end
+          end
+          renderMsgs()
+        end)
+      end
       u.round(bub, 12)
       if not mine then u.stroke(bub, C.line) end
       u.label(bub, txt, 10, 8, bw - 20, math.ceil(th), 13, FNT.reg, mine and C.white or C.text,
@@ -381,7 +498,23 @@ function M.open(ctx)
     local list = core.readChat(cur.file)
     fetching = false
     if cur ~= current or not u.alive() then return end
-    if #list == 0 and #msgs > 0 then return end   -- okuma başarısız sayılır, eldekini koru
+    if #list == 0 and #msgs > 0 then   -- okuma başarısız sayılır, eldekini koru; yenileme aralığı uzar
+      failStreak = failStreak + 1
+      return
+    end
+    failStreak = 0
+    -- yeni gönderdiğimiz ama sunucu okumasına henüz yansımamış mesajları koru
+    local have = {}
+    for _, m in ipairs(list) do have[num(m.i)] = true end
+    for k = #delivered, 1, -1 do
+      local d = delivered[k]
+      if os.clock() - d.at > 30 then
+        table.remove(delivered, k)
+      elseif d.file == cur.file then
+        if have[num(d.m.i)] then table.remove(delivered, k) else list[#list + 1] = d.m end
+      end
+    end
+    table.sort(list, function(a, b) return num(a.i) < num(b.i) end)
     local lastNew = (#list > 0) and num(list[#list].i) or 0
     if force or lastNew ~= lastI or #list ~= #msgs then
       msgs, lastI = list, lastNew
@@ -409,10 +542,28 @@ function M.open(ctx)
     openChat({ kind = "dm", nick = nick, key = core.nickKey(nick), file = core.chatFile(myNick, nick) })
   end
 
+  local function checkIncoming(announce)
+    local fl = core.friendList(fdb, myNick)
+    for _, f in ipairs(fl.incoming) do
+      if not knownIncoming[f.key] then
+        knownIncoming[f.key] = true
+        if announce then u.toast(f.nick .. T("new_req"), u.accent, 5) end
+      end
+    end
+    for k in pairs(knownIncoming) do
+      local still = false
+      for _, f in ipairs(fl.incoming) do if f.key == k then still = true break end end
+      if not still then knownIncoming[k] = nil end
+    end
+  end
+
   refreshFriends = function()
     local db = core.readFriends()
     if not u.alive() then return end
+    applyOverrides(db)
     fdb = db
+    checkIncoming(incInit)
+    incInit = true
     updateTabLabels()
     renderList()
     updateHeader()
@@ -421,30 +572,62 @@ function M.open(ctx)
   ----------------------------------------------------------
   -- Gönder
   ----------------------------------------------------------
+  -- Gönderme kuyruğu: mesajlar sırayla, arka planda gönderilir
+  local pumping = false
+  pumpQueue = function()
+    if pumping then return end
+    pumping = true
+    spawn(function()
+      while u.alive() do
+        local p = nil
+        for _, q in ipairs(pending) do
+          if q.state == "sending" then p = q break end
+        end
+        if not p then break end
+        local keep = (p.file == core.GLOBAL_CHAT) and 200 or 150
+        local ok, res = core.sendChat(p.file, myNick, p.text, lang, keep)
+        if not u.alive() then break end
+        if ok and type(res) == "table" then
+          for k, q in ipairs(pending) do
+            if q == p then table.remove(pending, k) break end
+          end
+          delivered[#delivered + 1] = { m = res, file = p.file, at = os.clock() }
+          if current and current.file == p.file then
+            local present = false
+            for _, m in ipairs(msgs) do
+              if num(m.i) == num(res.i) then present = true break end
+            end
+            if not present then msgs[#msgs + 1] = res; lastI = num(res.i) end
+            renderMsgs()
+            scrollEnd()
+          end
+        else
+          p.state = "failed"
+          if current and current.file == p.file then renderMsgs() end
+          u.toast(T("fail") .. tostring(res), C.danger, 7)
+        end
+      end
+      pumping = false
+    end)
+  end
+
+  local lastEnter = 0
   local function doSend()
-    if sending or not current then return end
+    if not current then return end
     local text = core.cleanText(core.trim(inBox.Text), MAX_TEXT)
     if text == "" then return end
-    if os.clock() - lastSend < 2 then u.toast(T("slow"), C.muted, 2) return end
-    sending = true
-    lastSend = os.clock()
-    sendBtn.Text = T("sending")
-    local cur = current
-    spawn(function()
-      local keep = (cur.kind == "global") and 200 or 150
-      local ok, res = core.sendChat(cur.file, myNick, text, lang, keep)
-      sending = false
-      if not u.alive() then return end
-      sendBtn.Text = T("send")
-      if ok then
-        if cur == current then
-          inBox.Text = ""
-          refreshChat(true)
-        end
-      else
-        u.toast(T("fail") .. tostring(res), C.danger, 8)
-      end
-    end)
+    if os.clock() - lastEnter < 0.35 then return end   -- çift Enter/tık koruması
+    local waiting = 0
+    for _, q in ipairs(pending) do if q.state == "sending" then waiting = waiting + 1 end end
+    if waiting >= MAX_PENDING then u.toast(T("too_many"), C.muted, 2) return end
+    lastEnter = os.clock()
+    nextPid = nextPid + 1
+    -- HEMEN ekranda görünür; gerçek gönderim kuyrukta
+    pending[#pending + 1] = { pid = nextPid, file = current.file, text = text, state = "sending", t = os.time() }
+    inBox.Text = ""
+    renderMsgs()
+    scrollEnd()
+    pumpQueue()
   end
   sendBtn.MouseButton1Click:Connect(doSend)
   inBox.FocusLost:Connect(function(enter) if enter then doSend() end end)
@@ -466,7 +649,10 @@ function M.open(ctx)
     local db = core.readProfiles()
     local friends = core.readFriends()
     if not u.alive() then return end
+    applyOverrides(friends)
     fdb = friends
+    checkIncoming(false)
+    incInit = true
 
     local out, seen = {}, {}
     local function add(nick)
@@ -496,7 +682,8 @@ function M.open(ctx)
       sleep(1)
       tick = tick + 1
       if not u.alive() then break end
-      if current and tick % POLL_CHAT == 0 then refreshChat(false) end
+      local every = math.floor(math.min(30, POLL_CHAT * (2 ^ math.min(failStreak, 3))))
+      if current and tick % every == 0 then refreshChat(false) end
       if tick % POLL_FRIENDS == 0 then refreshFriends() end
     end
   end)
