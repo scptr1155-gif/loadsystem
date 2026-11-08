@@ -1,9 +1,18 @@
--- hubcore | ORTAK KÜTÜPHANE (v1.2)  -> loadsystem deposuna "hubcore" adıyla yükle
+-- hubcore | ORTAK KÜTÜPHANE (v1.3)  -> loadsystem deposuna "hubcore" adıyla yükle
 -- =========================================================
 -- scripthub, create a code, studio, profile, script-menu ve search-profile bu dosyayı kullanır.
 -- İçerik: base64, json, HTTP, api-key okuma, index güncelleme (çakışmaya dayanıklı),
 -- dosya yaz/sil, günlük limit, istatistikler ve ortak pencere (ui) üreticisi.
 -- ui: GERİ / X (küçült -> "CR" logosu) sistemi burada, tüm ekranlar aynısını kullanır.
+--
+-- v1.3 yenilikleri (arka planda sessiz çalışan KORUMA sistemi, ekranda hiçbir şey göstermez):
+--  * httpGet: istekler arası kısa aralık + en fazla 3 eşzamanlı istek + üst üste hata olunca 15 sn "devre kesici"
+--    (internet/GitHub sorunu olunca oyunu istek yağmuruna tutmaz). 404 hata sayılmaz.
+--  * spawn: her iş parçacığı pcall içinde; bir ekranın hatası oyunu veya diğer ekranları düşürmez.
+--  * runGuarded / stopGuarded: scriptler ayrı iş parçacığında, hatalar yakalanarak çalışır; durdurulabilir.
+--  * Bekçi (watchdog): kapanmış ekran kayıtlarını temizler, Lua belleği çok şişerse çöp toplar, boşta kendini durdurur.
+--  * Kuyruk/iyimser güncelleme yardımcıları cr-chat, script-menu içinde: yazdığın mesaj/yorum/arkadaşlık işlemi hemen
+--    kendi ekranında görünür, gerçek gönderim arkada yapılır; başarısız olursa geri alınır ve haber verilir.
 --
 -- v1.2 yenilikleri:
 --  * Genel JSON araçları: readJson / mutateJson / textHeight.
@@ -20,11 +29,16 @@
 --  * Script Hub logosu: LOGO_ID (decal) + M.logo(); core.ui(..., { logo = true }) başlığa logo koyar.
 --  * Ortak JSON güncelleyici (mutateJson): index ve profiles aynı çakışma korumasını kullanır.
 
-local VERSION = "1.2"
+local VERSION = "1.3"
 local G = (type(getgenv) == "function" and getgenv()) or _G
 local S = G.__LOADSYS or {}
 G.__LOADSYS = S
 if type(S.CORE) == "table" and S.CORE.version == VERSION then return S.CORE end
+
+local GUARD = S.GUARD or {}
+S.GUARD = GUARD
+GUARD.fails, GUARD.cool, GUARD.last, GUARD.active = GUARD.fails or 0, GUARD.cool or 0, 0, 0
+S.THREADS = S.THREADS or {}
 
 local BASE  = "https://raw.githubusercontent.com/scptr1155-gif/loadsystem/refs/heads/main/"
 local STORE = "https://raw.githubusercontent.com/scptr1155-gif/roblox-game-star/refs/heads/main/"
@@ -53,9 +67,17 @@ local function sleep(s)
   elseif type(wait) == "function" then wait(s or 0) end
 end
 local function spawn(fn, ...)
-  if type(task) == "table" and type(task.spawn) == "function" then return task.spawn(fn, ...) end
-  local co = coroutine.create(fn)
-  coroutine.resume(co, ...)
+  local args = table.pack(...)
+  local function run()
+    local ok, err = pcall(fn, table.unpack(args, 1, args.n))
+    if not ok then
+      S.LASTERR = tostring(err)
+      if S.DEBUG then pcall(warn, "[hubcore] " .. tostring(err)) end
+    end
+  end
+  if type(task) == "table" and type(task.spawn) == "function" then return task.spawn(run) end
+  local co = coroutine.create(run)
+  coroutine.resume(co)
   return co
 end
 local function delay(t, fn)
@@ -392,10 +414,88 @@ end
 -- Okuma (herkese açık, anahtarsız)
 --------------------------------------------------------------
 function M.httpGet(url)
+  -- devre kesici: üst üste çok hata olduysa kısa süre hiç istek atma
+  if os.clock() < GUARD.cool then return nil end
+  -- en fazla 3 eşzamanlı istek, istekler arası en az 0.12 sn
+  local waited = 0
+  while GUARD.active >= 3 and waited < 40 do sleep(0.1) waited = waited + 1 end
+  local gap = 0.12 - (os.clock() - GUARD.last)
+  if gap > 0 then sleep(gap) end
+  GUARD.last = os.clock()
+  GUARD.active = GUARD.active + 1
   local sep = url:find("?", 1, true) and "&" or "?"
   local ok, r = pcall(function() return game:HttpGet(url .. sep .. "t=" .. tostring(os.time())) end)
-  if ok and type(r) == "string" and #r > 0 and r:sub(1, 14) ~= "404: Not Found" then return r end
+  GUARD.active = math.max(0, GUARD.active - 1)
+  if ok and type(r) == "string" then
+    GUARD.fails = 0
+    if #r > 0 and r:sub(1, 14) ~= "404: Not Found" then return r end
+    return nil
+  end
+  -- 404 (dosya yok) ağ hatası sayılmaz; diğer hatalar sayılır
+  if not tostring(r):find("404", 1, true) then
+    GUARD.fails = GUARD.fails + 1
+    if GUARD.fails >= 6 then
+      GUARD.cool = os.clock() + 15
+      GUARD.fails = 0
+    end
+  end
   return nil
+end
+
+-- Scripti ayrı iş parçacığında, hata yakalayarak çalıştırır. Dönüş: true | false, hata
+function M.runGuarded(code, label)
+  if type(loadstring) ~= "function" then return false, "loadstring yok" end
+  local fn, err = loadstring(tostring(code or ""))
+  if not fn then return false, tostring(err) end
+  local box = { done = false }
+  local function body()
+    local ok, e = pcall(fn)
+    box.ok, box.err, box.done = ok, e, true
+  end
+  local th
+  if type(task) == "table" and type(task.spawn) == "function" then th = task.spawn(body) else spawn(body) end
+  local t0 = os.clock()
+  while not box.done and os.clock() - t0 < 1.5 do sleep(0.1) end
+  if box.done and not box.ok then return false, tostring(box.err) end
+  if not box.done then
+    S.THREADS[#S.THREADS + 1] = { th = th, label = tostring(label or "?"), t = os.time() }
+    while #S.THREADS > 20 do table.remove(S.THREADS, 1) end
+  end
+  return true
+end
+
+-- runGuarded ile başlayıp hâlâ süren scriptleri durdurur (gerekirse menüye bağlanabilir)
+function M.stopGuarded()
+  local n = 0
+  for _, t in ipairs(S.THREADS) do
+    if t.th and type(task) == "table" and type(task.cancel) == "function" then
+      if pcall(task.cancel, t.th) then n = n + 1 end
+    end
+  end
+  S.THREADS = {}
+  return n
+end
+
+-- Bekçi: kapanmış ekran kayıtlarını temizler, bellek şişerse çöp toplar, ekran yoksa kendini durdurur
+function M.startWatchdog()
+  if S.WD then return end
+  S.WD = true
+  spawn(function()
+    local idle = 0
+    while true do
+      sleep(10)
+      local any = false
+      for k, g in pairs(S.GUIS or {}) do
+        local okp, par = pcall(function() return g.Parent end)
+        if not okp or par == nil then S.GUIS[k] = nil else any = true end
+      end
+      local okc, kb = pcall(collectgarbage, "count")
+      if okc and type(kb) == "number" and kb > 250000 then pcall(collectgarbage, "collect") end
+      if any then idle = 0 else idle = idle + 1 end
+      if idle >= 6 then break end
+    end
+    S.WD = false
+  end)
 end
 
 function M.readIndex()
@@ -1161,6 +1261,7 @@ function M.ui(ctx, o)
   local name = o.name or "Panel"
   S.GUIS = S.GUIS or {}
   safe(function() if S.GUIS[name] then S.GUIS[name]:Destroy() end end)
+  safe(M.startWatchdog)
 
   local gui = new("ScreenGui", {
     Name = "LoadSystem" .. name, ResetOnSpawn = false, IgnoreGuiInset = true, DisplayOrder = o.order or 800,
