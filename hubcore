@@ -1,11 +1,19 @@
--- hubcore | ORTAK KÜTÜPHANE (v1.0)  -> loadsystem deposuna "hubcore" adıyla yükle
+-- hubcore | ORTAK KÜTÜPHANE (v1.1)  -> loadsystem deposuna "hubcore" adıyla yükle
 -- =========================================================
--- scripthub, create a code, studio, profile ve script-menu bu dosyayı kullanır.
+-- scripthub, create a code, studio, profile, script-menu ve search-profile bu dosyayı kullanır.
 -- İçerik: base64, json, HTTP, api-key okuma, index güncelleme (çakışmaya dayanıklı),
 -- dosya yaz/sil, günlük limit, istatistikler ve ortak pencere (ui) üreticisi.
 -- ui: GERİ / X (küçült -> "CR" logosu) sistemi burada, tüm ekranlar aynısını kullanır.
+--
+-- v1.1 yenilikleri:
+--  * Sahiplik artık TAKMA ADA göre (entry.ownerNick; eski kayıtlarda entry.author). Studio, günlük limit
+--    ve istatistikler her takma ad için ayrı çalışır.
+--  * Profil sistemi: profiles.json (roblox-game-star deposu) -> readProfiles / mutateProfiles / touchProfile.
+--  * Oyuncu listesi: readPlayerList (loadsystem/player dosyasından SADECE takma ad ve Roblox adı alınır).
+--  * Script Hub logosu: LOGO_ID (decal) + M.logo(); core.ui(..., { logo = true }) başlığa logo koyar.
+--  * Ortak JSON güncelleyici (mutateJson): index ve profiles aynı çakışma korumasını kullanır.
 
-local VERSION = "1.0"
+local VERSION = "1.1"
 local G = (type(getgenv) == "function" and getgenv()) or _G
 local S = G.__LOADSYS or {}
 G.__LOADSYS = S
@@ -17,10 +25,12 @@ local OWNER, REPO, BRANCH = "scptr1155-gif", "roblox-game-star", "main"
 local REPO_API = "https://api.github.com/repos/" .. OWNER .. "/" .. REPO
 local API = REPO_API .. "/contents/"
 local INDEX_FILE = "hub-index.json"
+local PROFILES_FILE = "profiles.json"
 
 local M = {
   version = VERSION, BASE = BASE, STORE = STORE, API = API, BRANCH = BRANCH,
-  MAX_ID = 999999999, INDEX_FILE = INDEX_FILE,
+  MAX_ID = 999999999, INDEX_FILE = INDEX_FILE, PROFILES_FILE = PROFILES_FILE,
+  LOGO_ID = 136958517701160,   -- Script Hub logosu (decal)
 }
 
 local function getService(n)
@@ -320,9 +330,55 @@ function M.fmtTime(sec)
   return string.format("%02d:%02d", m, s)
 end
 
+-- GG.AA.YYYY (UTC); zaman yoksa "-"
+function M.fmtDate(ts)
+  ts = tonumber(ts) or 0
+  if ts <= 0 then return "-" end
+  local ok, s = pcall(os.date, "!%d.%m.%Y", ts)
+  if ok and type(s) == "string" then return s end
+  return "-"
+end
+
+-- Kaç gün önce (zaman yoksa nil)
+function M.daysAgo(ts)
+  ts = tonumber(ts) or 0
+  if ts <= 0 then return nil end
+  return math.max(0, math.floor((os.time() - ts) / 86400))
+end
+
 function M.userId()
   local ok, id = pcall(function() return Players.LocalPlayer.UserId end)
   return (ok and tonumber(id)) or 0
+end
+
+--------------------------------------------------------------
+-- Takma ad (hesap) kimliği
+-- Sahiplik, oy ve günlük limit artık takma ada göre tutulur.
+--------------------------------------------------------------
+function M.nickKey(s)
+  return string.lower(M.trim(tostring(s or "")))
+end
+
+-- Şu an giriş yapmış takma ad (ctx.nick, yoksa verify oturumu)
+function M.currentNick(ctx)
+  local n = ctx and ctx.nick
+  n = (type(n) == "string") and M.trim(n) or ""
+  if n == "" or n == "Player" then
+    local s = S.SESSION
+    if type(s) == "table" then
+      local sn = M.trim(tostring(s.playert or ""))
+      if sn ~= "" then n = sn end
+    end
+  end
+  if n == "" then n = "Player" end
+  return n
+end
+
+-- Script kaydının sahibi: yeni kayıtlarda ownerNick, eski kayıtlarda author (yayınlayan takma ad)
+function M.ownerNickOf(e)
+  local n = e and e.ownerNick
+  if type(n) ~= "string" or M.trim(n) == "" then n = e and e.author end
+  return M.nickKey(n)
 end
 
 --------------------------------------------------------------
@@ -344,6 +400,39 @@ function M.readIndex()
     return d
   end
   return { next = 1, scripts = {} }
+end
+
+-- Profiller: { profiles = { [takmaAdKucuk] = { nick, name, uid, joined, rbxCreated, bio, status, avatar, edited } } }
+function M.readProfiles()
+  local src = M.httpGet(STORE .. PROFILES_FILE)
+  local d = src and jsonDecode(src)
+  if type(d) == "table" then
+    if type(d.profiles) ~= "table" then d.profiles = {} end
+    return d
+  end
+  return { profiles = {} }
+end
+
+-- Kayıtlı oyuncular: loadsystem/player dosyasından SADECE takma ad (playert) ve Roblox adı (player) alınır.
+-- Şifre alanı okunmaz/saklanmaz. Dosya okunamazsa nil döner.
+function M.readPlayerList()
+  local src = M.httpGet(BASE .. "player")
+  if not src then return nil end
+  src = src:gsub("\239\187\191", "")
+  local list = {}
+  for line in src:gmatch("[^\r\n]+") do
+    local nick, name
+    for field in line:gmatch("[^/]+") do
+      local k, v = field:match("^%s*([^:]+):(.*)$")
+      if k then
+        k = (k:lower():gsub("%s+", ""))
+        if k == "playert" then nick = M.trim(v)
+        elseif k == "player" then name = M.trim(v) end
+      end
+    end
+    if nick and nick ~= "" then list[#list + 1] = { nick = nick, name = name or "" } end
+  end
+  return list
 end
 
 function M.fetchLoad(url)
@@ -368,46 +457,62 @@ function M.fetchLoad(url)
 end
 
 --------------------------------------------------------------
--- İstatistik + günlük limit (sahiplik: entry.owner == UserId)
+-- İstatistik + günlük limit (sahiplik: takma ad)
 --------------------------------------------------------------
--- Bugün (UTC) yayınladıysa, yeni yayın hakkına kalan saniye; hakkı varsa 0
-function M.dailyLeft(uid, idx)
+-- Bugün (UTC) bu takma adla yayınladıysa, yeni yayın hakkına kalan saniye; hakkı varsa 0
+function M.dailyLeft(nick, idx)
+  local key = M.nickKey(nick)
   local now = os.time()
   local day = math.floor(now / 86400)
   for _, e in ipairs((idx and idx.scripts) or {}) do
-    if tonumber(e.owner) == uid and math.floor(M.num(e.created) / 86400) == day then
+    if M.ownerNickOf(e) == key and math.floor(M.num(e.created) / 86400) == day then
       return (day + 1) * 86400 - now
     end
   end
   return 0
 end
 
-function M.statsFor(uid, idx)
-  local st = { count = 0, uses = 0, good = 0, bad = 0, mine = {}, best = nil, rank = nil, authors = 0, last = 0 }
-  local byOwner = {}
-  for _, e in ipairs(idx.scripts or {}) do
-    local ow = tonumber(e.owner)
-    if ow then
-      byOwner[ow] = (byOwner[ow] or 0) + M.num(e.uses)
-      if ow == uid then
-        st.count = st.count + 1
-        st.uses = st.uses + M.num(e.uses)
-        st.good = st.good + M.num(e.good)
-        st.bad = st.bad + M.num(e.bad)
-        st.mine[#st.mine + 1] = e
-        if M.num(e.created) > st.last then st.last = M.num(e.created) end
-        if not st.best or (M.num(e.good) - M.num(e.bad)) > (M.num(st.best.good) - M.num(st.best.bad)) then st.best = e end
+-- Tüm yazarların özeti: map[takmaAdKucuk] = { count, uses, good, bad, last, mine }, list = bu özetlerin listesi
+function M.indexByNick(idx)
+  local map, list = {}, {}
+  for _, e in ipairs((idx and idx.scripts) or {}) do
+    local k = M.ownerNickOf(e)
+    if k ~= "" then
+      local s = map[k]
+      if not s then
+        s = { count = 0, uses = 0, good = 0, bad = 0, last = 0, mine = {} }
+        map[k] = s
+        list[#list + 1] = s
       end
+      s.count = s.count + 1
+      s.uses = s.uses + M.num(e.uses)
+      s.good = s.good + M.num(e.good)
+      s.bad = s.bad + M.num(e.bad)
+      if M.num(e.created) > s.last then s.last = M.num(e.created) end
+      s.mine[#s.mine + 1] = e
     end
   end
-  table.sort(st.mine, function(a, b) return M.num(a.id) > M.num(b.id) end)
-  local mineUses, better, total = byOwner[uid] or 0, 0, 0
-  for _, v in pairs(byOwner) do
-    total = total + 1
-    if v > mineUses then better = better + 1 end
+  for _, s in ipairs(list) do
+    table.sort(s.mine, function(a, b) return M.num(a.id) > M.num(b.id) end)
   end
-  st.authors = total
-  if st.count > 0 then st.rank = better + 1 end
+  return map, list
+end
+
+function M.statsFor(nick, idx)
+  local map, list = M.indexByNick(idx)
+  local s = map[M.nickKey(nick)]
+  local st = { count = 0, uses = 0, good = 0, bad = 0, mine = {}, best = nil, rank = nil, authors = #list, last = 0 }
+  if s then
+    st.count, st.uses, st.good, st.bad, st.mine, st.last = s.count, s.uses, s.good, s.bad, s.mine, s.last
+    for _, e in ipairs(s.mine) do
+      if not st.best or (M.num(e.good) - M.num(e.bad)) > (M.num(st.best.good) - M.num(st.best.bad)) then st.best = e end
+    end
+    local better = 0
+    for _, o in ipairs(list) do
+      if o.uses > s.uses then better = better + 1 end
+    end
+    st.rank = better + 1
+  end
   return st
 end
 
@@ -430,6 +535,7 @@ local function callTimeout(fn, timeout)
   if not box.ok then return nil, tostring(box.a) end
   return box.a
 end
+M.callTimeout = callTimeout
 
 -- Dönüş: durumKodu, govde | nil, hata ("no_req" = hiç yöntem yok)
 local function req(url, method, body, headers)
@@ -557,26 +663,25 @@ local function netErr(lang, b)
 end
 M.netErr = netErr
 
--- index'i oku -> fn(idx, h) değiştirir -> geri yaz. 409/422'de yeniden dener.
+-- JSON dosyasını oku -> fn(veri, h) değiştirir -> geri yaz. 409/422'de yeniden dener.
+-- spec: { file, msg, empty = function() -> yeni boş tablo, check = function(tablo) -> düzeltilmiş tablo | nil (bozuk) }
 -- fn: true, sonuc | false, mesaj, yetkiHatasi
-function M.mutateIndex(fn, lang)
+local function mutateJson(spec, fn, lang)
   local function E(k) return M.E(lang, k) end
   return M.withKeys(lang, function(h)
     for _ = 1, 4 do
-      local c, b = req(API .. INDEX_FILE .. "?ref=" .. BRANCH .. "&t=" .. tostring(os.time()), "GET", nil, h)
+      local c, b = req(API .. spec.file .. "?ref=" .. BRANCH .. "&t=" .. tostring(os.time()), "GET", nil, h)
       if not c then return false, netErr(lang, b) end
-      local idx, sha = { next = 1, scripts = {} }, nil
+      local data, sha = spec.empty(), nil
       if c == 200 then
         local j = jsonDecode(b)
         if type(j) ~= "table" or not j.sha then return false, E("idx_fail") end
         sha = j.sha
         local raw = b64decode(tostring(j.content or ""))
         if M.trim(raw) ~= "" then
-          local p = jsonDecode(raw)
-          if type(p) ~= "table" then return false, E("idx_bad") end
-          if p.scripts == nil then p.scripts = {} end
-          if type(p.scripts) ~= "table" then return false, E("idx_bad") end
-          idx = p
+          local p = spec.check(jsonDecode(raw))
+          if not p then return false, E("idx_bad") end
+          data = p
         end
       elseif c == 401 or c == 403 then
         return false, E("bad_key") .. " [" .. ghMsg(b) .. "]", true
@@ -588,12 +693,12 @@ function M.mutateIndex(fn, lang)
         return false, E("idx_fail") .. " (HTTP " .. tostring(c) .. ")"
       end
 
-      local ok, res, auth = fn(idx, h)
+      local ok, res, auth = fn(data, h)
       if not ok then return false, res, auth end
 
-      local payload = { message = "hub: index", content = b64encode(jsonEncode(idx)), branch = BRANCH }
+      local payload = { message = spec.msg, content = b64encode(jsonEncode(data)), branch = BRANCH }
       if sha then payload.sha = sha end
-      local ci, bi = req(API .. INDEX_FILE, "PUT", jsonEncode(payload), h)
+      local ci, bi = req(API .. spec.file, "PUT", jsonEncode(payload), h)
       if not ci then return false, netErr(lang, bi) end
       if ci == 200 or ci == 201 then return true, res end
       if ci == 401 or ci == 403 then return false, E("bad_key") .. " [" .. ghMsg(bi) .. "]", true end
@@ -602,6 +707,75 @@ function M.mutateIndex(fn, lang)
     end
     return false, E("conflict")
   end)
+end
+
+local INDEX_SPEC = {
+  file = INDEX_FILE, msg = "hub: index",
+  empty = function() return { next = 1, scripts = {} } end,
+  check = function(p)
+    if type(p) ~= "table" then return nil end
+    if p.scripts == nil then p.scripts = {} end
+    if type(p.scripts) ~= "table" then return nil end
+    return p
+  end,
+}
+
+local PROFILE_SPEC = {
+  file = PROFILES_FILE, msg = "hub: profiles",
+  empty = function() return { profiles = {} } end,
+  check = function(p)
+    if type(p) ~= "table" then return nil end
+    if p.profiles == nil then p.profiles = {} end
+    if type(p.profiles) ~= "table" then return nil end
+    return p
+  end,
+}
+
+-- index'i oku -> fn(idx, h) değiştirir -> geri yaz
+function M.mutateIndex(fn, lang) return mutateJson(INDEX_SPEC, fn, lang) end
+
+-- profiles.json'u oku -> fn(db, h) değiştirir (db.profiles[takmaAdKucuk]) -> geri yaz
+function M.mutateProfiles(fn, lang) return mutateJson(PROFILE_SPEC, fn, lang) end
+
+-- Şu anki oyuncu için yeni profil kaydı
+function M.newProfile(nick)
+  local lp = Players and Players.LocalPlayer
+  local age = (lp and tonumber(lp.AccountAge)) or 0
+  local now = os.time()
+  return {
+    nick = tostring(nick or ""), joined = now, uid = M.userId(), name = (lp and lp.Name) or "",
+    rbxCreated = math.floor((now - math.floor(age) * 86400) / 86400) * 86400,
+    bio = "", status = "", avatar = 0,
+  }
+end
+
+-- Giriş yapan takma adın profili yoksa oluşturur (katılma tarihi = ilk kayıt anı). Varsa hiçbir şey yazmaz.
+function M.touchProfile(nick, lang)
+  nick = M.trim(nick)
+  if nick == "" then return false end
+  local key = M.nickKey(nick)
+  local db = M.readProfiles()
+  local p = db.profiles[key]
+  if type(p) == "table" and M.num(p.uid) > 0 and M.num(p.rbxCreated) > 0 and M.num(p.joined) > 0 then
+    return true
+  end
+  local ok = M.mutateProfiles(function(d)
+    local fresh = M.newProfile(nick)
+    local cur = d.profiles[key]
+    if type(cur) ~= "table" then
+      d.profiles[key] = fresh
+      return true
+    end
+    if M.num(cur.joined) <= 0 then cur.joined = fresh.joined end
+    if M.num(cur.uid) <= 0 then
+      cur.uid = fresh.uid
+      cur.name = fresh.name
+    end
+    if M.num(cur.rbxCreated) <= 0 then cur.rbxCreated = fresh.rbxCreated end
+    if cur.nick == nil or cur.nick == "" then cur.nick = nick end
+    return true
+  end, lang)
+  return ok and true or false
 end
 
 -- Var olan veya yeni dosyayı yaz (sha otomatik)
@@ -676,7 +850,26 @@ local function round(o, r) if o then new("UICorner", { CornerRadius = UDim.new(0
 local function stroke(o, col) if o then new("UIStroke", { ApplyStrokeMode = Enum.ApplyStrokeMode.Border, Color = col, Thickness = 1 }, o) end end
 M.new, M.round, M.stroke = new, round, stroke
 
--- Ortak pencere. o: name, title, sub, back, backText, w, h, order, noMin
+-- Script Hub logosu. LOGO_ID bir DECAL: önce rbxassetid denenir, 4 sn içinde yüklenmezse thumbnail'e geçer.
+function M.logo(parent, x, y, w, h, z)
+  local img = new("ImageLabel", {
+    Size = UDim2.fromOffset(w or 52, h or 52), Position = UDim2.fromOffset(x or 0, y or 0),
+    BackgroundTransparency = 1, BorderSizePixel = 0, ScaleType = Enum.ScaleType.Fit,
+    Image = "rbxassetid://" .. tostring(M.LOGO_ID), ZIndex = z or 5,
+  }, parent)
+  if img then
+    spawn(function()
+      sleep(4)
+      local ok, loaded = pcall(function() return img.IsLoaded end)
+      if ok and loaded == false then
+        safe(function() img.Image = "rbxthumb://type=Asset&id=" .. tostring(M.LOGO_ID) .. "&w=420&h=420" end)
+      end
+    end)
+  end
+  return img
+end
+
+-- Ortak pencere. o: name, title, sub, back, backText, w, h, order, noMin, logo
 -- Dönüş: u (gui, window, bg, toast, loading, pill, label, input, scroll, backBtn, xBtn, close, alive ...)
 function M.ui(ctx, o)
   ctx, o = ctx or {}, o or {}
@@ -881,6 +1074,10 @@ function M.ui(ctx, o)
   if o.back then
     u.backBtn = u.pill(o.backText or "← GERİ", PAD, 24, 110, 38, false)
     tx = PAD + 126
+  end
+  if o.logo then
+    M.logo(window, tx, 12, 52, 52, 5)
+    tx = tx + 64
   end
   if o.sub then
     u.title = u.label(window, o.title or "", tx, 20, 400, 28, 22, FNT.bold, C.text)
