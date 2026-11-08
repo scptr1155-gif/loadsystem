@@ -1,1 +1,580 @@
+-- search-profile | OYUNCU ARA + PROFİL (v1.0)  -> loadsystem deposuna "search-profile" adıyla yükle
+-- =========================================================
+-- main-menu'deki OYUNCU ARA tuşu (veya scripthub) bu dosyayı indirir ve open(ctx) çağırır.
+--
+--  * Takma adı yazdıkça oyuncular listelenir (resim + takma ad). Boş aramada en çok çalıştırılan yazarlar çıkar.
+--  * Birine tıklayınca LOADING ekranı, sonra profil: resim, durum, hakkında, katılma tarihi, Roblox hesap tarihi,
+--    yayınlanan script sayısı, toplam çalıştırma, oylar, sıralama ve yayınladığı scriptler.
+--  * Kendi profilinde PROFİLİ DÜZENLE: durum, hakkında, profil resmi (rbxassetid; boşsa Roblox avatarı).
+--  * Veriler: loadsystem/player (sadece takma ad + Roblox adı okunur, şifre okunmaz), roblox-game-star/profiles.json,
+--    roblox-game-star/hub-index.json. Gereken: hubcore v1.1
+--
+-- ctx: { lang, accent, bg, anim, nick, player, onBack }
 
+local G = (type(getgenv) == "function" and getgenv()) or _G
+local S = G.__LOADSYS or {}
+G.__LOADSYS = S
+
+local BASE = "https://raw.githubusercontent.com/scptr1155-gif/loadsystem/refs/heads/main/"
+local NEED = "1.1"
+
+local function loadCore()
+  if type(S.CORE) == "table" and S.CORE.version == NEED then return S.CORE end
+  local ok, src = pcall(function() return game:HttpGet(BASE .. "hubcore?t=" .. tostring(os.time())) end)
+  if not ok or type(src) ~= "string" or type(loadstring) ~= "function" then return nil end
+  local fn = loadstring(src)
+  if not fn then return nil end
+  local okR, c = pcall(fn)
+  if okR and type(c) == "table" then return c end
+  return nil
+end
+
+local STR = {
+  tr = {
+    back = "← GERİ", title = "Oyuncu Ara", t_profile = "Profil", t_edit = "Profili Düzenle",
+    search_ph = "Takma ad ara...", search_btn = "ARA", loading = "Yükleniyor...",
+    all = "Oyuncular: %d", found = "%d oyuncu bulundu", more = "… ve %d oyuncu daha. Aramayı daralt.",
+    none = "Bu takma adla oyuncu bulunamadı.", you = "SEN", r_sub = "Roblox: %s    •    %d script    ▶ %d",
+    open = "PROFİL", list_fail = "Oyuncu listesi okunamadı. Bağlantını kontrol et.",
+    ld_profile = "PROFİL YÜKLENİYOR", ld_save = "PROFİL KAYDEDİLİYOR", ld_sub = "LÜTFEN BEKLE",
+    no_status = "Durum yok", no_bio = "Henüz hakkında bir şey yazılmamış.", p_roblox = "Roblox: %s    •    ID %s",
+    c_scripts = "YAYINLANAN", c_runs = "ÇALIŞTIRMA", c_votes = "OY  👍 / 👎", c_rank = "SIRALAMA",
+    i_joined = "Sisteme katılma", i_rbx = "Roblox hesabı açılışı", i_last = "Son script yayını", i_edited = "Profil son düzenleme",
+    ago = "%d gün önce", today = "bugün", scripts_title = "Yayınladığı scriptler", no_scripts = "Henüz script yayınlamamış.",
+    edit_btn = "PROFİLİ DÜZENLE", f_status = "Durum (en fazla 40 karakter)", f_image = "Profil resmi ID (boş = Roblox avatarı)",
+    f_bio = "Hakkında (en fazla 200 karakter)", save = "KAYDET", cancel = "İPTAL",
+    saved = "Profil kaydedildi.", fail = "İşlem başarısız: ", bad_image = "Resim ID sadece rakamlardan oluşmalı.",
+  },
+  en = {
+    back = "← BACK", title = "Find Players", t_profile = "Profile", t_edit = "Edit Profile",
+    search_ph = "Search nickname...", search_btn = "SEARCH", loading = "Loading...",
+    all = "Players: %d", found = "%d players found", more = "… and %d more players. Narrow your search.",
+    none = "No player found with this nickname.", you = "YOU", r_sub = "Roblox: %s    •    %d scripts    ▶ %d",
+    open = "PROFILE", list_fail = "Could not read the player list. Check your connection.",
+    ld_profile = "LOADING PROFILE", ld_save = "SAVING PROFILE", ld_sub = "PLEASE WAIT",
+    no_status = "No status", no_bio = "Nothing written about this player yet.", p_roblox = "Roblox: %s    •    ID %s",
+    c_scripts = "PUBLISHED", c_runs = "RUNS", c_votes = "VOTES  👍 / 👎", c_rank = "RANK",
+    i_joined = "Joined the system", i_rbx = "Roblox account created", i_last = "Last script published", i_edited = "Profile last edited",
+    ago = "%d days ago", today = "today", scripts_title = "Published scripts", no_scripts = "Has not published any script yet.",
+    edit_btn = "EDIT PROFILE", f_status = "Status (max 40 characters)", f_image = "Profile image ID (empty = Roblox avatar)",
+    f_bio = "About (max 200 characters)", save = "SAVE", cancel = "CANCEL",
+    saved = "Profile saved.", fail = "Failed: ", bad_image = "Image ID must contain digits only.",
+  },
+}
+
+local MAX_RESULTS = 25
+
+local M = {}
+
+function M.open(ctx)
+  ctx = ctx or {}
+  local core = loadCore()
+  if not core then
+    print("[search-profile] hubcore yuklenemedi")
+    if type(ctx.onBack) == "function" then ctx.onBack() end
+    return
+  end
+  local lang = (ctx.lang == "en") and "en" or "tr"
+  local function T(k) return STR[lang][k] or STR.tr[k] or k end
+  local spawn, sleep, num, pad = core.spawn, core.sleep, core.num, core.pad
+  local myNick = core.currentNick(ctx)
+  local myKey = core.nickKey(myNick)
+  local myUid = core.userId()
+  local Players = game:GetService("Players")
+
+  local u = core.ui(ctx, { name = "Search", title = T("title"), back = true, backText = T("back"), logo = true })
+  if not u then return end
+  local C, FNT = u.C, u.FNT
+  local W, H, PAD, IW = u.W, u.H, u.PAD, u.IW
+  local AC = Enum.TextXAlignment.Center
+  local TRUNC = Enum.TextTruncate.AtEnd
+
+  -- Durum
+  local players = {}        -- { nick, key, name, uid, avatar, stats }
+  local loaded, busy = false, false
+  local view = "search"     -- "search" | "profile" | "edit"
+  local shown = nil         -- şu an açık profil verisi
+  local renderTok = 0
+  local ev                  -- düzenleme görünümü (aşağıda oluşturulur)
+
+  ----------------------------------------------------------
+  -- Yardımcılar
+  ----------------------------------------------------------
+  local function initialsOf(s)
+    s = tostring(s or "?")
+    local out = s:sub(1, 2)
+    pcall(function()
+      if type(utf8) == "table" and type(utf8.offset) == "function" then
+        local cut = utf8.offset(s, 3)
+        if cut then out = s:sub(1, cut - 1) end
+      end
+    end)
+    return string.upper(out)
+  end
+
+  local function thumb(uid)
+    return "rbxthumb://type=AvatarHeadShot&id=" .. tostring(math.floor(uid)) .. "&w=150&h=150"
+  end
+
+  -- Roblox adından UserId (oturum boyunca önbellek; bulunamazsa false)
+  S.SPUID = S.SPUID or {}
+  local uidCache = S.SPUID
+  local function lookupUid(name)
+    name = tostring(name or "")
+    if name == "" then return nil end
+    local ck = name:lower()
+    local c = uidCache[ck]
+    if c ~= nil then return c or nil end
+    local res = core.callTimeout(function() return Players:GetUserIdFromNameAsync(name) end, 6)
+    local id = tonumber(res)
+    uidCache[ck] = id or false
+    return id
+  end
+
+  local function recUid(rec)
+    if rec.key == myKey and myUid > 0 then return myUid end
+    if num(rec.uid) > 0 then return num(rec.uid) end
+    local id = lookupUid(rec.name)
+    if id then rec.uid = id end
+    return id
+  end
+
+  local function dateAgo(ts)
+    ts = num(ts)
+    if ts <= 0 then return "-" end
+    local days = core.daysAgo(ts) or 0
+    local txt = core.fmtDate(ts)
+    if days == 0 then return txt .. "  (" .. T("today") .. ")" end
+    return txt .. "  (" .. string.format(T("ago"), days) .. ")"
+  end
+
+  ----------------------------------------------------------
+  -- ARAMA GÖRÜNÜMÜ
+  ----------------------------------------------------------
+  local sv = u.new("Frame", { Size = UDim2.fromOffset(W, H), BackgroundTransparency = 1, Visible = true, ZIndex = 3 }, u.window)
+  local fSearch = u.input(84, 40, T("search_ph"), false, sv)
+  core.safe(function() fSearch.Parent.Size = UDim2.fromOffset(IW - 136, 40) end)
+  local searchBtn = u.pill(T("search_btn"), PAD + IW - 124, 84, 124, 40, true, sv)
+  local info = u.label(sv, T("loading"), PAD, 132, IW, 18, 12, FNT.med, C.muted)
+  local resScroll = u.scroll(PAD, 158, IW, 334, sv)
+
+  local function clearList()
+    for _, c in ipairs(resScroll:GetChildren()) do
+      if c.Name == "Card" or c.Name == "Msg" then core.safe(function() c:Destroy() end) end
+    end
+  end
+
+  local function matches(query)
+    local q = string.lower(core.trim(query))
+    local out = {}
+    for _, rec in ipairs(players) do
+      if q == "" then
+        out[#out + 1] = { rec = rec, score = 2 }
+      else
+        local s = string.find(rec.key, q, 1, true)
+        if s then out[#out + 1] = { rec = rec, score = (rec.key == q) and 0 or ((s == 1) and 1 or 2) } end
+      end
+    end
+    table.sort(out, function(a, b)
+      if a.score ~= b.score then return a.score < b.score end
+      local ua = a.rec.stats and a.rec.stats.uses or 0
+      local ub = b.rec.stats and b.rec.stats.uses or 0
+      if ua ~= ub then return ua > ub end
+      return a.rec.key < b.rec.key
+    end)
+    return out
+  end
+
+  local openProfile
+
+  -- Avatarları sırayla yükler (aynı anda onlarca web isteği atmamak için tek işçi)
+  local function loadAvatars(items, tok)
+    spawn(function()
+      for _, it in ipairs(items) do
+        if tok ~= renderTok or not u.alive() then return end
+        local id = recUid(it.rec)
+        if id and tok == renderTok and u.alive() then
+          core.safe(function() it.img.Image = thumb(id) end)
+        end
+        sleep(0.05)
+      end
+    end)
+  end
+
+  local function renderResults()
+    renderTok = renderTok + 1
+    local tok = renderTok
+    clearList()
+    local query = core.trim(fSearch.Text)
+    local res = matches(query)
+    local total = #res
+    if total == 0 then
+      info.Text = string.format(T("found"), 0)
+      u.label(resScroll, T("none"), 0, 0, IW, 80, 13, FNT.med, C.faint, { Name = "Msg", TextWrapped = true, TextXAlignment = AC })
+      return
+    end
+    info.Text = (query == "") and string.format(T("all"), total) or string.format(T("found"), total)
+
+    local items = {}
+    local shownCount = math.min(total, MAX_RESULTS)
+    for i = 1, shownCount do
+      local rec = res[i].rec
+      local card = u.new("TextButton", {
+        Name = "Card", Size = UDim2.fromOffset(IW - 8, 60), BackgroundColor3 = C.card, BorderSizePixel = 0,
+        Text = "", AutoButtonColor = false, LayoutOrder = i, ZIndex = 3,
+      }, resScroll)
+      u.round(card, 12)
+      u.stroke(card, C.line)
+      card.MouseEnter:Connect(function() u.tw(card, { BackgroundColor3 = C.cardHi }, 0.12) end)
+      card.MouseLeave:Connect(function() u.tw(card, { BackgroundColor3 = C.card }, 0.12) end)
+
+      local av = u.new("Frame", {
+        Size = UDim2.fromOffset(44, 44), Position = UDim2.fromOffset(10, 8), BackgroundColor3 = u.accent,
+        BorderSizePixel = 0, ZIndex = 4,
+      }, card)
+      u.round(av, 22)
+      u.label(av, initialsOf(rec.nick), 0, 0, 44, 44, 14, FNT.bold, C.white,
+        { Size = UDim2.fromScale(1, 1), TextXAlignment = AC, ZIndex = 5 })
+      local img = u.new("ImageLabel", {
+        Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, BorderSizePixel = 0,
+        ScaleType = Enum.ScaleType.Crop, ZIndex = 6,
+      }, av)
+      u.round(img, 22)
+      local custom = math.floor(num(rec.avatar))
+      if custom > 0 then
+        core.safe(function() img.Image = "rbxassetid://" .. tostring(custom) end)
+      else
+        items[#items + 1] = { img = img, rec = rec }
+      end
+
+      local nameTxt = rec.nick
+      if rec.key == myKey then nameTxt = rec.nick .. "   ·   " .. T("you") end
+      u.label(card, nameTxt, 64, 9, IW - 220, 20, 14, FNT.bold, C.text, { TextTruncate = TRUNC })
+      local st = rec.stats
+      u.label(card, string.format(T("r_sub"), (rec.name ~= "" and rec.name or "?"),
+        st and st.count or 0, st and st.uses or 0), 64, 33, IW - 220, 16, 11, FNT.med, C.muted, { TextTruncate = TRUNC })
+
+      local ob = u.pill(T("open"), IW - 8 - 122, 13, 110, 34, true, card)
+      ob.MouseButton1Click:Connect(function() openProfile(rec) end)
+      card.MouseButton1Click:Connect(function() openProfile(rec) end)
+    end
+
+    if total > shownCount then
+      u.label(resScroll, string.format(T("more"), total - shownCount), 0, 0, IW - 8, 30, 12, FNT.med, C.faint,
+        { Name = "Msg", LayoutOrder = shownCount + 1, TextXAlignment = AC })
+    end
+    loadAvatars(items, tok)
+  end
+
+  ----------------------------------------------------------
+  -- PROFİL GÖRÜNÜMÜ
+  ----------------------------------------------------------
+  local pv = u.new("Frame", { Size = UDim2.fromOffset(W, H), BackgroundTransparency = 1, Visible = false, ZIndex = 3 }, u.window)
+
+  local pAv = u.new("Frame", {
+    Size = UDim2.fromOffset(112, 112), Position = UDim2.fromOffset(PAD, 84), BackgroundColor3 = u.accent,
+    BorderSizePixel = 0, ZIndex = 4,
+  }, pv)
+  u.round(pAv, 22)
+  local pInit = u.label(pAv, "", 0, 0, 112, 112, 38, FNT.bold, C.white,
+    { Size = UDim2.fromScale(1, 1), TextXAlignment = AC, ZIndex = 5 })
+  local pImg = u.new("ImageLabel", {
+    Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, BorderSizePixel = 0,
+    ScaleType = Enum.ScaleType.Crop, ZIndex = 6,
+  }, pAv)
+  u.round(pImg, 22)
+
+  local TX = PAD + 128
+  local pNick = u.label(pv, "", TX, 84, IW - 128, 34, 26, FNT.bold, C.text, { TextTruncate = TRUNC })
+  local pStatus = u.label(pv, "", TX, 120, IW - 128, 18, 13, FNT.med, u.accent, { TextTruncate = TRUNC })
+  local pRoblox = u.label(pv, "", TX, 142, IW - 128, 16, 11, FNT.reg, C.faint, { TextTruncate = TRUNC })
+  local pBio = u.label(pv, "", TX, 164, IW - 128, 34, 12, FNT.reg, C.muted,
+    { TextWrapped = true, TextYAlignment = Enum.TextYAlignment.Top })
+
+  local CWD = math.floor((IW - 36) / 4)
+  local function statCard(i, capKey)
+    local f = u.new("Frame", {
+      Size = UDim2.fromOffset(CWD, 62), Position = UDim2.fromOffset(PAD + (i - 1) * (CWD + 12), 212),
+      BackgroundColor3 = C.card, BorderSizePixel = 0, ZIndex = 4,
+    }, pv)
+    u.round(f, 12)
+    u.stroke(f, C.line)
+    local v = u.label(f, "-", 0, 8, CWD, 28, 20, FNT.bold, C.text, { TextXAlignment = AC, ZIndex = 5 })
+    u.label(f, T(capKey), 0, 38, CWD, 16, 10, FNT.med, C.faint, { TextXAlignment = AC, ZIndex = 5 })
+    return v
+  end
+  local sScripts = statCard(1, "c_scripts")
+  local sRuns = statCard(2, "c_runs")
+  local sVotes = statCard(3, "c_votes")
+  local sRank = statCard(4, "c_rank")
+
+  local function infoRow(i, capKey)
+    local y = 296 + (i - 1) * 34
+    u.label(pv, T(capKey), PAD, y, 190, 30, 12, FNT.reg, C.faint)
+    local v = u.label(pv, "-", PAD + 190, y, 210, 30, 13, FNT.med, C.text, { TextTruncate = TRUNC })
+    u.new("Frame", {
+      Size = UDim2.fromOffset(400, 1), Position = UDim2.fromOffset(PAD, y + 31), BackgroundColor3 = C.line,
+      BorderSizePixel = 0, ZIndex = 4,
+    }, pv)
+    return v
+  end
+  local iJoined = infoRow(1, "i_joined")
+  local iRbx = infoRow(2, "i_rbx")
+  local iLast = infoRow(3, "i_last")
+  local iEdited = infoRow(4, "i_edited")
+
+  u.label(pv, T("scripts_title"), PAD + 424, 290, 400, 20, 13, FNT.bold, C.text)
+  local sList = u.scroll(PAD + 424, 316, 400, 116, pv)
+
+  local editBtn = u.pill(T("edit_btn"), PAD, 442, 300, 48, true, pv)
+
+  local function clearScripts()
+    for _, c in ipairs(sList:GetChildren()) do
+      if c.Name == "Card" or c.Name == "Msg" then core.safe(function() c:Destroy() end) end
+    end
+  end
+
+  local function showProfile(d)
+    shown = d
+    view = "profile"
+    sv.Visible = false
+    ev.Visible = false
+    pv.Visible = true
+    local rec, p, st = d.rec, d.p, d.st
+    u.title.Text = T("t_profile")
+
+    pNick.Text = rec.nick .. ((rec.key == myKey) and ("   ·   " .. T("you")) or "")
+    local status = tostring(p.status or "")
+    pStatus.Text = (status ~= "") and status or T("no_status")
+    local rid = (rec.key == myKey and myUid > 0) and myUid or num(rec.uid)
+    pRoblox.Text = string.format(T("p_roblox"), (rec.name ~= "" and rec.name or "?"), (rid > 0) and tostring(math.floor(rid)) or "?")
+    local bio = tostring(p.bio or "")
+    pBio.Text = (bio ~= "") and bio or T("no_bio")
+
+    -- resim: özel resim varsa o, yoksa Roblox avatarı
+    pInit.Text = initialsOf(rec.nick)
+    pImg.Image = ""
+    local custom = math.floor(num(p.avatar))
+    if custom > 0 then
+      core.safe(function() pImg.Image = "rbxassetid://" .. tostring(custom) end)
+    elseif rid > 0 then
+      core.safe(function() pImg.Image = thumb(rid) end)
+    end
+
+    sScripts.Text = tostring(st.count)
+    sRuns.Text = tostring(math.floor(st.uses))
+    sVotes.Text = math.floor(st.good) .. " / " .. math.floor(st.bad)
+    sRank.Text = st.rank and string.format("#%d / %d", st.rank, st.authors) or "-"
+
+    iJoined.Text = dateAgo(p.joined)
+    iRbx.Text = core.fmtDate(p.rbxCreated)
+    iLast.Text = (st.last > 0) and dateAgo(st.last) or "-"
+    iEdited.Text = dateAgo(p.edited)
+
+    clearScripts()
+    if #st.mine == 0 then
+      u.label(sList, T("no_scripts"), 0, 0, 392, 40, 12, FNT.med, C.faint, { Name = "Msg" })
+    else
+      for i, e in ipairs(st.mine) do
+        if i > 20 then break end
+        local card = u.new("Frame", {
+          Name = "Card", Size = UDim2.fromOffset(392, 46), BackgroundColor3 = C.card, BorderSizePixel = 0,
+          LayoutOrder = i, ZIndex = 4,
+        }, sList)
+        u.round(card, 10)
+        u.stroke(card, C.line)
+        u.label(card, tostring(e.name or "?"), 12, 6, 368, 18, 13, FNT.bold, C.text, { TextTruncate = TRUNC, ZIndex = 5 })
+        u.label(card, "ID " .. pad(math.floor(num(e.id))) .. "    👍 " .. math.floor(num(e.good)) .. "  👎 "
+          .. math.floor(num(e.bad)) .. "    ▶ " .. math.floor(num(e.uses)), 12, 25, 368, 14, 10, FNT.med, C.muted, { ZIndex = 5 })
+      end
+    end
+
+    editBtn.Visible = d.self == true
+  end
+
+  ----------------------------------------------------------
+  -- DÜZENLEME GÖRÜNÜMÜ (sadece kendi profilin)
+  ----------------------------------------------------------
+  ev = u.new("Frame", { Size = UDim2.fromOffset(W, H), BackgroundTransparency = 1, Visible = false, ZIndex = 3 }, u.window)
+  local fStatus = u.input(84, 40, T("f_status"), false, ev)
+  local fImage = u.input(132, 40, T("f_image"), false, ev)
+  local fBio = u.input(180, 150, T("f_bio"), true, ev)
+  local saveBtn = u.pill(T("save"), PAD, 442, 500, 48, true, ev)
+  local cancelBtn = u.pill(T("cancel"), PAD + 512, 442, 312, 48, false, ev)
+
+  local function showSearch()
+    view = "search"
+    pv.Visible = false
+    ev.Visible = false
+    sv.Visible = true
+    u.title.Text = T("title")
+  end
+
+  local function showEdit()
+    if not shown or not shown.self then return end
+    view = "edit"
+    pv.Visible = false
+    sv.Visible = false
+    ev.Visible = true
+    u.title.Text = T("t_edit")
+    local p = shown.p
+    fStatus.Text = tostring(p.status or "")
+    fImage.Text = (num(p.avatar) > 0) and tostring(math.floor(num(p.avatar))) or ""
+    fBio.Text = tostring(p.bio or "")
+  end
+
+  ----------------------------------------------------------
+  -- Profil aç (LOADING ekranlı)
+  ----------------------------------------------------------
+  openProfile = function(rec)
+    if busy then return end
+    busy = true
+    u.loading(true, T("ld_profile"), T("ld_sub"))
+    spawn(function()
+      local t0 = os.clock()
+      local db = core.readProfiles()
+      local idx = core.readIndex()
+      local st = core.statsFor(rec.nick, idx)
+      local pr = db.profiles[rec.key]
+      if type(pr) ~= "table" then pr = {} end
+      if num(pr.uid) > 0 then rec.uid = pr.uid end
+      if (pr.name or "") ~= "" and rec.name == "" then rec.name = tostring(pr.name) end
+      rec.avatar = pr.avatar
+      if num(rec.avatar) <= 0 then recUid(rec) end   -- avatar için UserId çöz (loading ekranı arkasında)
+      rec.stats = { count = st.count, uses = st.uses, good = st.good, bad = st.bad }
+
+      local rest = 0.9 - (os.clock() - t0)
+      if rest > 0 then sleep(rest) end
+      busy = false
+      if not u.alive() then return end
+      u.loading(false)
+      showProfile({ rec = rec, p = pr, st = st, self = (rec.key == myKey) })
+    end)
+  end
+
+  ----------------------------------------------------------
+  -- Olaylar
+  ----------------------------------------------------------
+  editBtn.MouseButton1Click:Connect(function()
+    if busy or view ~= "profile" then return end
+    showEdit()
+  end)
+
+  cancelBtn.MouseButton1Click:Connect(function()
+    if busy or view ~= "edit" then return end
+    showProfile(shown)
+  end)
+
+  saveBtn.MouseButton1Click:Connect(function()
+    if busy or view ~= "edit" or not shown then return end
+    local status = core.cleanText(core.trim(fStatus.Text), 40)
+    local bio = core.cleanText(core.trim(fBio.Text), 200)
+    local imgTxt = core.trim(fImage.Text)
+    local img = 0
+    if imgTxt ~= "" then
+      local digits = imgTxt:match("^%d+$")
+      if not digits or #digits > 15 then u.toast(T("bad_image"), C.danger) return end
+      img = tonumber(digits) or 0
+    end
+
+    busy = true
+    u.loading(true, T("ld_save"), T("ld_sub"))
+    spawn(function()
+      local ok, err = core.mutateProfiles(function(db)
+        local p = db.profiles[myKey]
+        if type(p) ~= "table" then
+          p = core.newProfile(myNick)
+          db.profiles[myKey] = p
+        end
+        p.status, p.bio, p.avatar, p.edited = status, bio, img, os.time()
+        return true
+      end, lang)
+      busy = false
+      if not u.alive() then return end
+      u.loading(false)
+      if ok then
+        local p = shown.p
+        p.status, p.bio, p.avatar, p.edited = status, bio, img, os.time()
+        if num(p.joined) <= 0 then p.joined = os.time() end
+        shown.rec.avatar = img
+        u.toast(T("saved"), C.ok, 4)
+        showProfile(shown)
+      else
+        u.toast(T("fail") .. tostring(err), C.danger, 8)
+      end
+    end)
+  end)
+
+  searchBtn.MouseButton1Click:Connect(function()
+    if loaded and view == "search" then renderResults() end
+  end)
+  fSearch.FocusLost:Connect(function(enter)
+    if enter and loaded and view == "search" then renderResults() end
+  end)
+
+  -- Yazdıkça ara (kısa bekleme ile)
+  local qTok = 0
+  fSearch:GetPropertyChangedSignal("Text"):Connect(function()
+    qTok = qTok + 1
+    local my = qTok
+    spawn(function()
+      sleep(0.25)
+      if my == qTok and u.alive() and loaded and view == "search" then renderResults() end
+    end)
+  end)
+
+  u.backBtn.MouseButton1Click:Connect(function()
+    if busy then return end
+    if view == "edit" then showProfile(shown) return end
+    if view == "profile" then showSearch() return end
+    local back = ctx.onBack
+    u.close()
+    if type(back) == "function" then back() end
+  end)
+
+  ----------------------------------------------------------
+  -- İlk yükleme: oyuncu listesi + profiller + index
+  ----------------------------------------------------------
+  spawn(function()
+    local list = core.readPlayerList()
+    local db = core.readProfiles()
+    local idx = core.readIndex()
+    if not u.alive() then return end
+    local map = core.indexByNick(idx)
+
+    local out, seen = {}, {}
+    local function add(nick, name)
+      nick = core.trim(nick)
+      if nick == "" then return end
+      local key = core.nickKey(nick)
+      if seen[key] then return end
+      seen[key] = true
+      local p = db.profiles[key]
+      if type(p) ~= "table" then p = {} end
+      local rname = core.trim(name or "")
+      if rname == "" then rname = core.trim(p.name or "") end
+      out[#out + 1] = {
+        nick = nick, key = key, name = rname, uid = num(p.uid), avatar = p.avatar, stats = map[key],
+      }
+    end
+    if list then
+      for _, r in ipairs(list) do add(r.nick, r.name) end
+    end
+    for key, p in pairs(db.profiles) do
+      if type(p) == "table" then add(tostring(p.nick or key), p.name) end
+    end
+    add(myNick, "")
+
+    players = out
+    loaded = true
+    if not list then u.toast(T("list_fail"), C.danger, 6) end
+    renderResults()
+
+    -- kendi profilini (yoksa) sessizce oluştur
+    spawn(function()
+      pcall(core.touchProfile, myNick, lang)
+    end)
+  end)
+end
+
+return M
