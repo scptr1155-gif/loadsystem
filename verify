@@ -1,4 +1,4 @@
--- verify | LOAD SYSTEM — ANA KOD (v1.1.2)
+-- verify | LOAD SYSTEM — ANA KOD (v1.2.0)
 -- =========================================================
 -- Bu dosya sistemin giriş noktasıdır.
 -- Akış:
@@ -9,7 +9,24 @@
 --   5. Oyuncu bilgileri GitHub'daki `player` dosyasına yazılır.
 --   6. Beyaz panel kapanır -> siyah perde -> `main-menu` yüklenir.
 --   7. main-menu çalışınca siyah perde kalkar.
--- v1.1.2: loadChunk derleme hatasında hatalı satırı ve dosyanın ilk satırını yazdırır.
+--
+-- main-menu ŞARTI: çalışınca  getgenv().__LOADSYS.MAIN_READY = true  yapmalı.
+--   (yapmazsa 20 sn sonra "MAIN MENU BASLAMADI" hatası çıkar)
+--
+-- v1.2.0 düzeltmeleri:
+--  * http_request yanlış imzayla çağrılıyordu (tablo bekler) -> düzeltildi.
+--  * HTTP hata kodu artık gerçek döner. Eskiden hep 0 dönüyordu, bu yüzden
+--    409 çakışma yeniden denemesi hiç çalışmıyordu.
+--  * PUT isteklerine Content-Type: application/json eklendi.
+--  * API anahtarı çözülemese bile giriş paneli açılır (sadece kayıt kapanır).
+--  * Kayıtta ( ) [ ] { } < > " ' ` karakterleri sessizce siliniyordu ama girişte
+--    silinmiyordu -> o hesaplarla giriş imkansızdı. Artık kayıtta açık hata
+--    verilir; eski hesaplar için girişte iki biçim de denenir.
+--  * Giriş/kayıt çift tetiklenince main-menu iki kez yükleniyordu -> engellendi.
+--  * main-menu bekleme süresi 6 sn -> 20 sn.
+--  * "Tekrar dene" düğmesi her denemede bağlantı çoğaltıyordu -> tek bağlantı.
+--  * boot tablosu kendi kurucusunda kendine başvuruyordu (nil) -> düzeltildi.
+--  * Sunucuya ulaşılamazsa "şifre hatalı" yerine gerçek hata gösterilir.
 
 local function safe(fn, ...)
   local ok, a, b = pcall(fn, ...)
@@ -33,54 +50,15 @@ do
 end
 safe(function() G.__LOADSYS = S end)
 
-local function mk(class, props)
-  local ok, o = safe(function() return Instance.new(class) end)
+-- Tek yanlış özellik tüm arayüzü çökertmesin
+local function mk(class, props, parent)
+  local ok, o = pcall(function() return Instance.new(class) end)
   if not ok or not o then return nil end
   for k, v in pairs(props or {}) do
-    safe(function() o[k] = v end)
+    pcall(function() o[k] = v end)
   end
+  if parent then pcall(function() o.Parent = parent end) end
   return o
-end
-
-local function rgb(r, g, b)
-  local ok, c = safe(function() return Color3.fromRGB(r, g, b) end)
-  if ok then return c end
-  return nil
-end
-
-local function u2full()
-  local ok, v = safe(function() return UDim2.new(1, 0, 1, 0) end)
-  return ok and v or nil
-end
-
-local function u2off(x, y)
-  local ok, v = safe(function() return UDim2.fromOffset(x, y) end)
-  return ok and v or nil
-end
-
-local function u2scale(x, y)
-  local ok, v = safe(function() return UDim2.fromScale(x, y) end)
-  return ok and v or nil
-end
-
-local function v2scale(x, y)
-  local ok, v = safe(function() return Vector2.new(x, y) end)
-  return ok and v or nil
-end
-
-local function uround(r)
-  local ok, v = safe(function() return UDim.new(0, r) end)
-  return ok and v or nil
-end
-
-local function font(name)
-  local ok, v = safe(function() return Enum.Font[name] end)
-  return ok and v or nil
-end
-
-local function alignX(name)
-  local ok, v = safe(function() return Enum.TextXAlignment[name] end)
-  return ok and v or nil
 end
 
 local function getService(name)
@@ -101,8 +79,7 @@ local function attachGui(gui)
   local ok2 = pcall(function()
     local lp = Players and Players.LocalPlayer
     if not lp then error("LocalPlayer yok") end
-    local pg = lp:WaitForChild("PlayerGui")
-    gui.Parent = pg
+    gui.Parent = lp:WaitForChild("PlayerGui")
   end)
   return ok2
 end
@@ -127,129 +104,129 @@ local function applyGoal(obj, goal)
   end
 end
 
+--------------------------------------------------------------
+-- SİYAH YÜKLEME EKRANI
+--------------------------------------------------------------
 local function buildBoot()
   local gui = mk("ScreenGui", {
     Name = "LoadSystemBoot",
     ResetOnSpawn = false,
     IgnoreGuiInset = true,
     DisplayOrder = 999,
+    ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
   })
   if not gui then return nil end
   attachGui(gui)
 
   local bg = mk("Frame", {
     Name = "Background",
-    Size = u2full(),
-    BackgroundColor3 = rgb(0, 0, 0),
+    Size = UDim2.new(1, 0, 1, 0),
+    BackgroundColor3 = Color3.fromRGB(0, 0, 0),
     BorderSizePixel = 0,
     ZIndex = 1,
-  })
+  }, gui)
   if not bg then return nil end
-  bg.Parent = gui
 
   local title = mk("TextLabel", {
     Name = "Title",
-    Size = u2off(900, 56),
-    Position = u2scale(0.5, 0.42),
-    AnchorPoint = v2scale(0.5, 0.5),
+    Size = UDim2.fromOffset(900, 56),
+    Position = UDim2.fromScale(0.5, 0.42),
+    AnchorPoint = Vector2.new(0.5, 0.5),
     BackgroundTransparency = 1,
     Text = "LOADING",
-    TextColor3 = rgb(255, 255, 255),
+    TextColor3 = Color3.fromRGB(255, 255, 255),
     TextSize = 42,
-    Font = font("GothamBold"),
-    TextXAlignment = alignX("Center"),
+    Font = Enum.Font.GothamBold,
+    TextXAlignment = Enum.TextXAlignment.Center,
     TextWrapped = true,
     ZIndex = 2,
-  })
-  if title then title.Parent = bg end
+  }, bg)
 
   local sub = mk("TextLabel", {
     Name = "Sub",
-    Size = u2off(900, 24),
-    Position = u2scale(0.5, 0.49),
-    AnchorPoint = v2scale(0.5, 0.5),
+    Size = UDim2.fromOffset(900, 24),
+    Position = UDim2.fromScale(0.5, 0.49),
+    AnchorPoint = Vector2.new(0.5, 0.5),
     BackgroundTransparency = 1,
     Text = "SISTEM YUKLENIYOR",
-    TextColor3 = rgb(150, 152, 158),
+    TextColor3 = Color3.fromRGB(150, 152, 158),
     TextSize = 13,
-    Font = font("GothamMedium"),
-    TextXAlignment = alignX("Center"),
+    Font = Enum.Font.GothamMedium,
+    TextXAlignment = Enum.TextXAlignment.Center,
     ZIndex = 2,
-  })
-  if sub then sub.Parent = bg end
+  }, bg)
 
   local detail = mk("TextLabel", {
     Name = "Detail",
-    Size = u2off(840, 70),
-    Position = u2scale(0.5, 0.57),
-    AnchorPoint = v2scale(0.5, 0.5),
+    Size = UDim2.fromOffset(840, 70),
+    Position = UDim2.fromScale(0.5, 0.57),
+    AnchorPoint = Vector2.new(0.5, 0.5),
     BackgroundTransparency = 1,
     Text = "",
-    TextColor3 = rgb(120, 124, 132),
+    TextColor3 = Color3.fromRGB(120, 124, 132),
     TextSize = 12,
-    Font = font("Gotham"),
+    Font = Enum.Font.Gotham,
     TextWrapped = true,
-    TextXAlignment = alignX("Center"),
+    TextXAlignment = Enum.TextXAlignment.Center,
     ZIndex = 2,
-  })
-  if detail then detail.Parent = bg end
+  }, bg)
 
   local barBg = mk("Frame", {
     Name = "BarBg",
-    Size = u2off(280, 4),
-    Position = u2scale(0.5, 0.65),
-    AnchorPoint = v2scale(0.5, 0.5),
-    BackgroundColor3 = rgb(40, 42, 48),
+    Size = UDim2.fromOffset(280, 4),
+    Position = UDim2.fromScale(0.5, 0.65),
+    AnchorPoint = Vector2.new(0.5, 0.5),
+    BackgroundColor3 = Color3.fromRGB(40, 42, 48),
     BorderSizePixel = 0,
     ZIndex = 2,
-  })
-  if barBg then barBg.Parent = bg end
+  }, bg)
 
   local bar = mk("Frame", {
     Name = "Bar",
-    Size = u2off(0, 4),
-    BackgroundColor3 = rgb(88, 101, 242),
+    Size = UDim2.fromOffset(0, 4),
+    BackgroundColor3 = Color3.fromRGB(88, 101, 242),
     BorderSizePixel = 0,
     ZIndex = 3,
-  })
-  if bar and barBg then bar.Parent = barBg end
+  }, barBg)
   if bar then
-    local corner = mk("UICorner", { CornerRadius = uround(2) })
-    if corner then corner.Parent = bar end
+    mk("UICorner", { CornerRadius = UDim.new(0, 2) }, bar)
   end
 
   safe(function()
-    if TweenService then
+    if TweenService and bar then
       local t = TweenService:Create(bar,
         TweenInfo.new(1.1, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
-        { Size = u2off(280, 4) })
+        { Size = UDim2.fromOffset(280, 4) })
       t:Play()
     end
   end)
 
   local retry = mk("TextButton", {
     Name = "Retry",
-    Size = u2off(240, 48),
-    Position = u2scale(0.5, 0.73),
-    AnchorPoint = v2scale(0.5, 0.5),
-    BackgroundColor3 = rgb(24, 26, 31),
+    Size = UDim2.fromOffset(240, 48),
+    Position = UDim2.fromScale(0.5, 0.73),
+    AnchorPoint = Vector2.new(0.5, 0.5),
+    BackgroundColor3 = Color3.fromRGB(24, 26, 31),
     BorderSizePixel = 0,
     Text = "TEKRAR DENE",
-    TextColor3 = rgb(255, 255, 255),
+    TextColor3 = Color3.fromRGB(255, 255, 255),
     TextSize = 15,
-    Font = font("GothamBold"),
+    Font = Enum.Font.GothamBold,
     Visible = false,
     ZIndex = 3,
-  })
+  }, bg)
   if retry then
-    retry.Parent = bg
-    local corner = mk("UICorner", { CornerRadius = uround(12) })
-    if corner then corner.Parent = retry end
+    mk("UICorner", { CornerRadius = UDim.new(0, 12) }, retry)
   end
 
-  local boot = {
+  -- NOT: `local boot = { ... boot ... }` yazılırsa tablo içindeki `boot` yerel
+  -- değişkene DEĞİL global'e bakar (nil). Bu yüzden önce bildirip sonra atıyoruz.
+  local boot
+  boot = {
     gui = gui, bg = bg, title = title, sub = sub, bar = bar,
     detail = detail, retry = retry, barBg = barBg,
+    dismissed = false,
+    onRetry = nil,
     setText = function(text, subText)
       if title then safe(function() title.Text = text end) end
       if subText and sub then safe(function() sub.Text = subText end) end
@@ -258,34 +235,43 @@ local function buildBoot()
       if detail then safe(function() detail.Text = tostring(text or "") end) end
     end,
     reset = function()
-      safe(function() boot.dismissed = false end)
+      boot.dismissed = false
       if title then
         safe(function() title.Text = "LOADING" end)
-        safe(function() title.TextColor3 = rgb(255, 255, 255) end)
+        safe(function() title.TextColor3 = Color3.fromRGB(255, 255, 255) end)
       end
       if sub then safe(function() sub.Text = "SISTEM YUKLENIYOR" end) end
-      if detail then safe(function() detail.Text = "" end) end
+      if detail then
+        safe(function() detail.Text = "" end)
+        safe(function() detail.TextColor3 = Color3.fromRGB(120, 124, 132) end)
+      end
       if barBg then safe(function() barBg.Visible = true end) end
       if retry then safe(function() retry.Visible = false end) end
     end,
     fail = function(text, why)
       if title then
         safe(function() title.Text = text end)
-        safe(function() title.TextColor3 = rgb(224, 80, 80) end)
+        safe(function() title.TextColor3 = Color3.fromRGB(224, 80, 80) end)
       end
       if sub then safe(function() sub.Text = "SISTEM YUKLENEMEDI" end) end
       if detail then
         safe(function() detail.Text = tostring(why or "") end)
-        safe(function() detail.TextColor3 = rgb(190, 120, 120) end)
+        safe(function() detail.TextColor3 = Color3.fromRGB(190, 120, 120) end)
       end
       if barBg then safe(function() barBg.Visible = false end) end
       if retry then safe(function() retry.Visible = true end) end
       print("[loadsystem] HATA: " .. tostring(text) .. " | " .. tostring(why or ""))
     end,
-    setRetry = function(fn)
-      if retry then safe(function() retry.MouseButton1Click:Connect(fn) end) end
-    end,
+    -- tek bağlantı: her denemede yeni Connect yapılmaz
+    setRetry = function(fn) boot.onRetry = fn end,
   }
+
+  if retry then
+    retry.MouseButton1Click:Connect(function()
+      if boot.onRetry then boot.onRetry() end
+    end)
+  end
+
   return boot
 end
 
@@ -312,8 +298,7 @@ local function sleep(s)
 end
 
 local function spawn(fn, ...)
-  if type(task) == "table" and type(task.spawn) == "function" then return task.spawn(fn, ...)
-  end
+  if type(task) == "table" and type(task.spawn) == "function" then return task.spawn(fn, ...) end
   local co = coroutine.create(fn)
   coroutine.resume(co, ...)
   return co
@@ -480,7 +465,7 @@ local function jsonDecode(str)
     local s = pos
     while pos <= len do
       local c = str:sub(pos, pos)
-      if c:match("[%d%+%-%.%deE]") then pos = pos + 1 else break end
+      if c:match("[%d%+%-%.eE]") then pos = pos + 1 else break end
     end
     return tonumber(str:sub(s, pos - 1))
   end
@@ -613,7 +598,6 @@ local function decryptBlob(keyParts, blob)
     local kb = key:byte(((i - 1) % #key) + 1)
     local off = (kb + (i - 1) * 7) % 256
     local b = (enc:byte(i) - off) % 256
-    if b < 0 then b = b + 256 end
     out[i] = string.char(bxor32(b, ks:byte(i)))
   end
   local data = table.concat(out)
@@ -635,11 +619,12 @@ local function httpGetNative(url)
   return res
 end
 
+-- fn'i ayrı thread'de çalıştırır; zaman aşımında nil döner
 local function callWithTimeout(fn, timeout)
   local box = { done = false }
   spawn(function()
-    local ok, a, b = pcall(fn)
-    box.ok, box.a, box.b = ok, a, b
+    local ok, a = pcall(fn)
+    box.ok, box.a = ok, a
     box.done = true
   end)
   local waited = 0
@@ -647,17 +632,21 @@ local function callWithTimeout(fn, timeout)
     sleep(0.05)
     waited = waited + 0.05
   end
-  if not box.done then return nil end
+  if not box.done then return nil, "zaman asimi" end
   if not box.ok then return nil, tostring(box.a) end
-  return { box.a, box.b }
+  return box.a
 end
 
+-- Dönüş: true, govde, kod   |   false, hataMetni, kod (kod 0 = sunucuya hiç ulaşılamadı)
 local function httpReq(url, method, body, headers)
-  method = (method or "GET"):upper()
+  method = string.upper(method or "GET")
   headers = headers or {}
+  if body ~= nil and headers["Content-Type"] == nil then
+    headers["Content-Type"] = "application/json"
+  end
   local needAuth = headers["Authorization"] ~= nil
   local lastErr = "bilinmeyen hata"
-  local TIMEOUT = 12
+  local TIMEOUT = 15
 
   if method == "GET" and not needAuth then
     local res = httpGetNative(url)
@@ -673,16 +662,13 @@ local function httpReq(url, method, body, headers)
   end
   if type(http_request) == "function" then
     providers[#providers + 1] = function()
-      return http_request(url, method, headers, body)
+      return http_request({ Url = url, Method = method, Headers = headers, Body = body })
     end
   end
   if type(syn) == "table" and type(syn.request) == "function" then
     providers[#providers + 1] = function()
       return syn.request({ Url = url, Method = method, Headers = headers, Body = body })
     end
-  end
-  if type(http) == "table" and type(http.get) == "function" then
-    providers[#providers + 1] = function() return http.get(url) end
   end
   local okSvc, svc = pcall(function() return game:GetService("HttpService") end)
   if okSvc and svc then
@@ -691,40 +677,48 @@ local function httpReq(url, method, body, headers)
     end
   end
 
+  if #providers == 0 and method ~= "GET" then
+    return false, "executor HTTP istegi (request) desteklemiyor", 0
+  end
+
   for _, provider in ipairs(providers) do
-    local res = callWithTimeout(provider, TIMEOUT)
-    if res == nil then
-      lastErr = "zaman asimi"
-    else
-      local a, b = res[1], res[2]
-      if type(a) == "table" then
-        local code = tonumber(a.StatusCode or a.Status or a.code or a.status_code or 0) or 0
-        local txt = a.Body or a.Content or a.body or a.text or ""
-        if type(txt) ~= "string" then txt = tostring(txt) end
-        if code >= 200 and code < 300 then return true, txt, code end
-        lastErr = "HTTP " .. tostring(code)
-      elseif type(a) == "string" then
-        local code = tonumber(b) or 0
-        if code >= 200 and code < 300 then return true, a, code end
-        lastErr = "HTTP " .. tostring(code)
+    local res, err = callWithTimeout(provider, TIMEOUT)
+    if type(res) == "table" then
+      local code = tonumber(res.StatusCode or res.Status or res.status_code or res.code) or 0
+      local txt = res.Body or res.Content or res.body or res.text or ""
+      if type(txt) ~= "string" then txt = tostring(txt) end
+      if code >= 200 and code < 300 then return true, txt, code end
+      if code > 0 then
+        -- Sunucu cevap verdi ama hata döndü: diğer yöntemleri denemenin anlamı yok
+        local d = jsonDecode(txt)
+        local m = ""
+        if type(d) == "table" and type(d.message) == "string" then
+          m = " (" .. d.message:sub(1, 80) .. ")"
+        end
+        return false, "HTTP " .. tostring(code) .. m, code
       end
+      lastErr = "gecersiz yanit"
+    else
+      lastErr = tostring(err or "yanit yok")
     end
   end
 
   return false, lastErr, 0
 end
 
-local function fetchText(url)
+-- Boş yanıta izin veren ham GET
+local function rawGet(url)
   local ok, body, code = httpReq(url, "GET", nil, { ["User-Agent"] = "loadsystem-lua" })
-  if not ok then
-    return nil, "HTTP " .. tostring(code)
-  end
-  if not body or #body < 3 then
-    return nil, "bos yanit"
-  end
-  if body:sub(1, 14) == "404: Not Found" then
-    return nil, "dosya bulunamadi (404)"
-  end
+  if not ok then return nil, tostring(body) end
+  if type(body) ~= "string" then return nil, "gecersiz yanit" end
+  if body:sub(1, 14) == "404: Not Found" then return nil, "dosya bulunamadi (404)" end
+  return body
+end
+
+local function fetchText(url)
+  local body, err = rawGet(url)
+  if not body then return nil, err end
+  if #body < 3 then return nil, "bos yanit" end
   return body
 end
 
@@ -743,8 +737,8 @@ end
 
 local function ghGetFile(path, token)
   local url = API_BASE .. path .. "?ref=" .. BRANCH .. "&t=" .. tostring(os.time())
-  local ok, body, code = httpReq(url, "GET", nil, ghHeaders(token))
-  if not ok then return nil, "HTTP " .. tostring(code) end
+  local ok, body = httpReq(url, "GET", nil, ghHeaders(token))
+  if not ok then return nil, tostring(body) end
   local data = jsonDecode(body)
   if type(data) ~= "table" or not data.sha then return nil, "geçersiz yanıt" end
   local content = ""
@@ -754,6 +748,7 @@ local function ghGetFile(path, token)
   return { sha = data.sha, content = content }
 end
 
+-- Dönüş: true, yeniSha, kod  |  false, hata, kod
 local function ghPutFile(path, content, sha, token, message)
   local payload = jsonEncode({
     message = message or ("loadsystem: update " .. path),
@@ -762,7 +757,7 @@ local function ghPutFile(path, content, sha, token, message)
     branch = BRANCH,
   })
   local ok, body, code = httpReq(API_BASE .. path, "PUT", payload, ghHeaders(token))
-  if not ok then return false, "HTTP " .. tostring(code), code end
+  if not ok then return false, tostring(body), code end
   local data = jsonDecode(body)
   if type(data) == "table" and data.content and data.content.sha then
     return true, data.content.sha, code
@@ -771,19 +766,27 @@ local function ghPutFile(path, content, sha, token, message)
 end
 
 local function fetchRepoFile(path, token)
-  local raw = fetchText(RAW_BASE .. path .. "?t=" .. tostring(os.time()))
-  if raw and #raw > 0 then return raw end
-  local info = ghGetFile(path, token)
+  local raw, e1 = fetchText(RAW_BASE .. path .. "?t=" .. tostring(os.time()))
+  if raw then return raw end
+  local info, e2 = ghGetFile(path, token)
   if info and type(info.content) == "string" and #info.content > 0 then
     return info.content
   end
-  return nil, "icerik alinamadi"
+  return nil, "raw: " .. tostring(e1) .. " | api: " .. tostring(e2 or "bos icerik")
 end
 
 --------------------------------------------------------------
 -- OYUNCU LİSTESİ (player dosyası)
 -- Satır biçimi: player:(isim)/playert:(takma ad)/password:(şifre)
 --------------------------------------------------------------
+-- Kayıtta yasak karakterler: boşluk, kontrol karakterleri ve bunlar:  / ( ) [ ] { } < > " ' `
+local BAD = "[%(%)%[%]%{%}<>\"'`/%s%c]"
+local BAD_MSG = "Takma ad ve şifre boşluk veya şu karakterleri içeremez: / ( ) [ ] { } < > \" ' `"
+
+local function stripBad(s)
+  return (tostring(s or ""):gsub(BAD, ""))
+end
+
 local function parsePlayers(text)
   local list = {}
   for line in (text or ""):gmatch("[^\r\n]+") do
@@ -807,20 +810,26 @@ local function parsePlayers(text)
   return list
 end
 
+-- Dönüş: liste, info(sha+içerik veya nil)  |  {}, nil, hataMetni
 local function readPlayers(token)
   local info, err = ghGetFile(FILE_PLAYER, token)
   if info then
     return parsePlayers(info.content), info
   end
-  local raw = fetchText(RAW_BASE .. FILE_PLAYER .. "?t=" .. tostring(os.time()))
+  local raw, err2 = rawGet(RAW_BASE .. FILE_PLAYER .. "?t=" .. tostring(os.time()))
   if raw then return parsePlayers(raw), nil end
-  return {}, nil, err
+  return {}, nil, "api: " .. tostring(err) .. " | raw: " .. tostring(err2)
 end
 
+-- Eski kayıtlarda yasak karakterler silinmiş olabilir: ham ve temizlenmiş biçimi de dene
 local function findPlayer(list, nick, pass)
-  local target = string.lower(nick or "")
+  local n1 = string.lower(nick or "")
+  local n2 = string.lower(stripBad(nick))
+  local p1 = pass or ""
+  local p2 = stripBad(pass)
   for _, rec in ipairs(list) do
-    if string.lower(rec.playert or "") == target and rec.password == pass then
+    local rn = string.lower(rec.playert or "")
+    if (rn == n1 or rn == n2) and (rec.password == p1 or rec.password == p2) then
       return rec
     end
   end
@@ -921,58 +930,54 @@ local function buildCurtain()
   retryCorner.CornerRadius = UDim.new(0, 12)
   retryCorner.Parent = retry
 
+  local function fade(bgGoal, txGoal, t)
+    local ok = false
+    if TweenService then
+      ok = pcall(function()
+        local info = TweenInfo.new(t, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+        TweenService:Create(bg, info, bgGoal):Play()
+        TweenService:Create(title, info, txGoal):Play()
+        TweenService:Create(sub, info, txGoal):Play()
+      end)
+    end
+    if not ok then
+      applyGoal(bg, bgGoal)
+      applyGoal(title, txGoal)
+      applyGoal(sub, txGoal)
+    end
+  end
+
+  local onRetry = nil
+  retry.MouseButton1Click:Connect(function()
+    if onRetry then onRetry() end
+  end)
+
   local api = {
     gui = gui, bg = bg, title = title, sub = sub,
     setText = function(t, s)
       title.Text = t
+      title.TextColor3 = Color3.fromRGB(255, 255, 255)
       if s then sub.Text = s end
+      retry.Visible = false
     end,
     fadeIn = function(t)
       bg.BackgroundTransparency = 1
       title.TextTransparency = 1
       sub.TextTransparency = 1
-      local goalBg = { BackgroundTransparency = 0 }
-      local goalTx = { TextTransparency = 0 }
-      local ok = false
-      if TweenService then
-        ok = pcall(function()
-          TweenService:Create(bg, TweenInfo.new(t or 0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), goalBg):Play()
-          TweenService:Create(title, TweenInfo.new(t or 0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), goalTx):Play()
-          TweenService:Create(sub, TweenInfo.new(t or 0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), goalTx):Play()
-        end)
-      end
-      if not ok then
-        applyGoal(bg, goalBg)
-        applyGoal(title, goalTx)
-        applyGoal(sub, goalTx)
-      end
+      fade({ BackgroundTransparency = 0 }, { TextTransparency = 0 }, t or 0.35)
     end,
     fadeOut = function(t)
-      local goalBg = { BackgroundTransparency = 1 }
-      local goalTx = { TextTransparency = 1 }
-      local ok = false
-      if TweenService then
-        ok = pcall(function()
-          TweenService:Create(bg, TweenInfo.new(t or 0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), goalBg):Play()
-          TweenService:Create(title, TweenInfo.new(t or 0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), goalTx):Play()
-          TweenService:Create(sub, TweenInfo.new(t or 0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), goalTx):Play()
-        end)
-      end
-      if not ok then
-        applyGoal(bg, goalBg)
-        applyGoal(title, goalTx)
-        applyGoal(sub, goalTx)
-      end
+      fade({ BackgroundTransparency = 1 }, { TextTransparency = 1 }, t or 0.5)
       sleep((t or 0.5) + 0.05)
       pcall(function() gui:Destroy() end)
     end,
-    error = function(text)
+    error = function(text, why)
       title.Text = text
       title.TextColor3 = Color3.fromRGB(224, 80, 80)
-      sub.Text = "BAGLANTI KONTROL EDILIP TEKRAR DENEYIN"
+      sub.Text = tostring(why or "BAGLANTI KONTROL EDILIP TEKRAR DENEYIN")
       retry.Visible = true
     end,
-    setRetry = function(fn) retry.MouseButton1Click:Connect(fn) end,
+    setRetry = function(fn) onRetry = fn end,
   }
   return api
 end
@@ -1021,24 +1026,29 @@ local function waitFor(cond, timeout)
   return cond()
 end
 
-local function sanitize(s)
+local function charLen(s)
+  if type(utf8) == "table" and type(utf8.len) == "function" then
+    local ok, n = pcall(utf8.len, s)
+    if ok and n then return n end
+  end
+  return #s
+end
+
+local function sanitizeName(s)
   s = tostring(s or "")
-  s = s:gsub("[%(%)%[%]%{%}<>%\"'`]", "")
-  s = s:gsub("[\r\n\t]", " ")
-  s = s:gsub("%s+", " ")
-  s = s:gsub("^%s+", "")
-  s = s:gsub("%s+$", "")
+  s = s:gsub(BAD, "")
   return s
 end
 
 local function validate(name, nick, pass)
+  if not name or name == "" then return false, "Oyuncu adı bulunamadı." end
   if not nick or nick == "" then return false, "Takma ad boş olamaz." end
-  if #nick < 3 or #nick > 20 then return false, "Takma ad 3-20 karakter olmalı." end
-  if nick:find("[/%s]") then return false, "Takma ad '/' ve boşluk içeremez." end
+  local nl = charLen(nick)
+  if nl < 3 or nl > 20 then return false, "Takma ad 3-20 karakter olmalı." end
+  if nick:find(BAD) then return false, BAD_MSG end
   if not pass or pass == "" then return false, "Şifre boş olamaz." end
   if #pass < 4 or #pass > 64 then return false, "Şifre 4-64 karakter olmalı." end
-  if pass:find("[/%s]") then return false, "Şifre '/' ve boşluk içeremez." end
-  if not name or name == "" then return false, "Oyuncu adı bulunamadı." end
+  if pass:find(BAD) then return false, BAD_MSG end
   return true
 end
 
@@ -1054,9 +1064,13 @@ local function dummyCurtain()
 end
 
 local function proceedToMainMenu(session)
+  -- Çift tetiklenmeye karşı: main-menu yalnızca bir kez yüklenir
+  if S.PROCEEDING then return end
+  S.PROCEEDING = true
+
   sleep(0.4)
   if panel and panel.isOpen and panel.isOpen() then pcall(function() panel.close() end) end
-  sleep(0.45)
+  sleep(0.2)
 
   local okC, curtain = pcall(buildCurtain)
   if not okC or type(curtain) ~= "table" then
@@ -1071,7 +1085,7 @@ local function proceedToMainMenu(session)
     local code, err = fetchRepoFile(FILE_MENU, TOKEN)
     if not code then
       print("[loadsystem] main-menu indirilemedi: " .. tostring(err))
-      curtain.error("MAIN MENU YUKLENEMEDI")
+      curtain.error("MAIN MENU YUKLENEMEDI", tostring(err):sub(1, 140))
       return
     end
 
@@ -1080,14 +1094,15 @@ local function proceedToMainMenu(session)
     local mod, lerr = loadChunk(code, FILE_MENU)
     if not mod then
       print("[loadsystem] main-menu hatasi: " .. tostring(lerr))
-      curtain.error("MAIN MENU HATASI")
+      curtain.error("MAIN MENU HATASI", tostring(lerr):sub(1, 140))
       return
     end
     local ready = waitFor(function()
       return S.MAIN_READY == true
-    end, 6)
+    end, 20)
     if not ready then
-      curtain.error("MAIN MENU BASLAMADI")
+      print("[loadsystem] main-menu calisti ama __LOADSYS.MAIN_READY = true yapmadi")
+      curtain.error("MAIN MENU BASLAMADI", "main-menu MAIN_READY isaretini koymadi")
       return
     end
     S.MAIN = mod
@@ -1101,7 +1116,11 @@ local function proceedToMainMenu(session)
 end
 
 local function onLogin(nick, pass)
-  local list = readPlayers(TOKEN)
+  if S.PROCEEDING then return true, "Giriş başarılı." end
+  local list, _, rerr = readPlayers(TOKEN)
+  if #list == 0 and rerr then
+    return false, "Sunucuya ulaşılamadı: " .. tostring(rerr):sub(1, 90)
+  end
   local rec = findPlayer(list, nick, pass)
   if not rec then
     return false, "Takma ad veya şifre hatalı."
@@ -1113,52 +1132,46 @@ local function onLogin(nick, pass)
 end
 
 local function onRegister(name, nick, pass)
+  if S.PROCEEDING then return true, "Hesap oluşturuldu." end
+
+  name = sanitizeName(name)
   local ok, msg = validate(name, nick, pass)
   if not ok then return false, msg end
   if not TOKEN or TOKEN == "" then
-    return false, "Sunucu erişimi yok (API anahtarı çözülemedi)."
+    return false, "Sunucu erişimi yok (API anahtarı çözülemedi). Giriş yapabilirsin ama kayıt kapalı."
   end
 
-  name = sanitize(name)
-  nick = sanitize(nick)
-  pass = sanitize(pass)
-  if name == "" then return false, "Oyuncu adı bulunamadı." end
-  if nick == "" then return false, "Takma ad boş olamaz." end
-  if pass == "" then return false, "Şifre boş olamaz." end
-
-  local list, info = readPlayers(TOKEN)
+  local list, info, rerr = readPlayers(TOKEN)
+  if rerr then
+    return false, "Oyuncu listesi okunamadı: " .. tostring(rerr):sub(1, 90)
+  end
   if nicknameTaken(list, nick) then
     return false, "Bu takma ad zaten alınmış."
   end
 
   -- Mevcut içerik bilinmiyorsa ÜZERİNE YAZMA (veri kaybı olmasın)
-  if not info or type(info.content) ~= "string" then
-    return false, "Oyuncu listesi okunamadi, kayit yapilmadi (mevcut veriler korundu)."
+  if not info or type(info.content) ~= "string" or not info.sha then
+    return false, "Oyuncu listesi okunamadı, kayıt yapılmadı (mevcut veriler korundu)."
   end
 
-  local content = info.content
   local line = "player:" .. name .. "/playert:" .. nick .. "/password:" .. pass
-  content = appendLine(content, line)
-
-  local sha = info and info.sha or nil
-  if not sha then
+  local cur = info
+  local wrote, werr, wcode = false, "bilinmeyen hata", 0
+  for _ = 1, 3 do
+    wrote, werr, wcode = ghPutFile(FILE_PLAYER, appendLine(cur.content, line), cur.sha, TOKEN, "loadsystem: add player " .. nick)
+    if wrote then break end
+    -- 409/422: biri aynı anda yazdı. Dosyayı yeniden okuyup tekrar dene.
+    if wcode ~= 409 and wcode ~= 422 then break end
+    sleep(0.6)
     local re = ghGetFile(FILE_PLAYER, TOKEN)
-    if re then sha = re.sha end
-  end
-  if not sha then
-    return false, "Dosya bilgisi alınamadı."
-  end
-
-  local wrote, werr, wcode = ghPutFile(FILE_PLAYER, content, sha, TOKEN, "loadsystem: add player " .. nick)
-  if not wrote and wcode == 409 then
-    local re = ghGetFile(FILE_PLAYER, TOKEN)
-    if re then
-      local content2 = appendLine(re.content, line)
-      wrote, werr, wcode = ghPutFile(FILE_PLAYER, content2, re.sha, TOKEN, "loadsystem: add player " .. nick)
+    if not re then break end
+    if nicknameTaken(parsePlayers(re.content), nick) then
+      return false, "Bu takma ad zaten alınmış."
     end
+    cur = re
   end
   if not wrote then
-    return false, "Yazma hatası: " .. tostring(werr)
+    return false, "Yazma hatası: " .. tostring(werr):sub(1, 90)
   end
 
   local session = { player = name, playert = nick, time = os.time() }
@@ -1169,6 +1182,7 @@ end
 
 local function main()
   panel = nil
+  S.PROCEEDING = nil
   local boot = BOOT
   if not boot then
     boot = (function()
@@ -1189,11 +1203,10 @@ local function main()
   end)
   print("[loadsystem] yukleme basladi")
 
-  -- 1) API anahtarını çöz
+  -- 1) API anahtarını çöz (sadece KAYIT için gerekir; çözülemese de giriş çalışır)
   TOKEN = decryptBlob(CIPHER.KEY, CIPHER.BLOB)
   if not TOKEN then
-    boot.fail("API ANAHTARI COZULEMEDI", "Sifreleme katmani hata verdi. Dosya bozuk olabilir.")
-    return
+    print("[loadsystem] UYARI: API anahtari cozulemedi. Giris calisir, kayit kapali.")
   end
 
   -- 2) arayüzü indir
@@ -1206,7 +1219,7 @@ local function main()
   end
 
   -- 3) arayüzü çalıştır
-  print("[loadsystem] arayuz calistiriliyor")
+  print("[loadsystem] arayuz calistiriliyor (" .. #code .. " bayt)")
   S.__VERIFY_LOADING = true
   local GUI, lerr = loadChunk(code, FILE_GUI)
   S.__VERIFY_LOADING = nil
@@ -1235,7 +1248,12 @@ local function main()
   -- 5) siyah ekranı animasyonla kaldır
   print("[loadsystem] panel hazir, siyah ekran kaldiriliyor")
   sleep(0.45)
-  pcall(function() GUI.dismissBoot() end)
+  local okD, errD = pcall(function() GUI.dismissBoot() end)
+  if not okD then
+    print("[loadsystem] dismissBoot hatasi: " .. tostring(errD))
+    -- perde ne olursa olsun kalkmalı
+    pcall(function() boot.gui:Destroy() end)
+  end
 end
 
 local okBoot, errBoot = pcall(main)
@@ -1249,6 +1267,6 @@ if not okBoot then
 end
 
 return {
-  version = "1.1.2",
+  version = "1.2.0",
   session = function() return S.SESSION end,
 }
