@@ -1,8 +1,10 @@
--- studio | STUDİO (v1.0)  -> loadsystem deposuna "studio" adıyla yükle
+-- studio | STUDİO (v1.1)  -> loadsystem deposuna "studio" adıyla yükle
 -- =========================================================
--- Sadece KENDİ yayınladığın scriptler (owner == senin UserId'in) listelenir.
+-- Sadece GİRİŞ YAPILAN TAKMA ADIN yayınladığı scriptler listelenir (her takma ad için ayrı Studio).
 -- Düzenle: ad, resim, açıklama, kod. Sil: iki kez basarak onay.
--- Kaydet/Sil sırasında sahiplik index'te tekrar kontrol edilir; başka hesap düzenleyemez.
+-- Kaydet/Sil sırasında sahiplik index'te tekrar kontrol edilir; başka takma ad düzenleyemez.
+--
+-- v1.1: sahiplik UserId yerine takma ada göre. Eski kayıtlar yayınlayan takma adın (author) Studio'sunda görünür.
 --
 -- ctx: { lang, accent, bg, anim, nick, player, onBack }
 
@@ -11,9 +13,10 @@ local S = G.__LOADSYS or {}
 G.__LOADSYS = S
 
 local BASE = "https://raw.githubusercontent.com/scptr1155-gif/loadsystem/refs/heads/main/"
+local NEED = "1.1"
 
 local function loadCore()
-  if type(S.CORE) == "table" then return S.CORE end
+  if type(S.CORE) == "table" and S.CORE.version == NEED then return S.CORE end
   local ok, src = pcall(function() return game:HttpGet(BASE .. "hubcore?t=" .. tostring(os.time())) end)
   if not ok or type(src) ~= "string" or type(loadstring) ~= "function" then return nil end
   local fn = loadstring(src)
@@ -25,8 +28,8 @@ end
 
 local STR = {
   tr = {
-    back = "← GERİ", title = "Studio", sub = "Sadece senin yayınladığın scriptler",
-    loading = "Yükleniyor...", empty = "Henüz script yayınlamadın. CREATE ile ilk scriptini yayınla.",
+    back = "← GERİ", title = "Studio", sub = "Sadece bu takma adla yayınladığın scriptler",
+    loading = "Yükleniyor...", empty = "Bu takma adla henüz script yayınlamadın. CREATE ile ilk scriptini yayınla.",
     strip = "Yayınlanan: %d    ▶ %d    👍 %d    👎 %d", d_free = "Bugünkü yayın hakkın: VAR", d_used = "Bugünkü yayın hakkın: KULLANILDI",
     edit = "DÜZENLE", f_name = "Script adı", f_image = "Resim ID (rbxassetid)", f_desc = "Açıklama",
     f_code = "Script kodu (Lua)", save = "KAYDET", cancel = "İPTAL", delete = "SİL", sure = "EMİN MİSİN?",
@@ -36,8 +39,8 @@ local STR = {
     fail = "İşlem başarısız: ", code_fail = "Kod indirilemedi, kaydetme kapalı.",
   },
   en = {
-    back = "← BACK", title = "Studio", sub = "Only scripts you published",
-    loading = "Loading...", empty = "You haven't published anything yet. Use CREATE to publish your first script.",
+    back = "← BACK", title = "Studio", sub = "Only scripts published with this nickname",
+    loading = "Loading...", empty = "You haven't published anything with this nickname yet. Use CREATE to publish your first script.",
     strip = "Published: %d    ▶ %d    👍 %d    👎 %d", d_free = "Today's publish: AVAILABLE", d_used = "Today's publish: USED",
     edit = "EDIT", f_name = "Script name", f_image = "Image ID (rbxassetid)", f_desc = "Description",
     f_code = "Script code (Lua)", save = "SAVE", cancel = "CANCEL", delete = "DELETE", sure = "ARE YOU SURE?",
@@ -61,7 +64,8 @@ function M.open(ctx)
   local lang = (ctx.lang == "en") and "en" or "tr"
   local function T(k) return STR[lang][k] or STR.tr[k] or k end
   local spawn, num, pad = core.spawn, core.num, core.pad
-  local uid = core.userId()
+  local nick = core.currentNick(ctx)
+  local nickKey = core.nickKey(nick)
 
   local u = core.ui(ctx, { name = "Studio", title = T("title"), sub = T("sub"), back = true, backText = T("back") })
   if not u then return end
@@ -162,10 +166,10 @@ function M.open(ctx)
     spawn(function()
       local idx = core.readIndex()
       if not u.alive() then return end
-      local st = core.statsFor(uid, idx)
+      local st = core.statsFor(nick, idx)
       entries = st.mine
-      strip.Text = string.format(T("strip"), st.count, st.uses, st.good, st.bad) .. "    |    "
-        .. ((core.dailyLeft(uid, idx) > 0) and T("d_used") or T("d_free"))
+      strip.Text = "@" .. nick .. "    |    " .. string.format(T("strip"), st.count, st.uses, st.good, st.bad) .. "    |    "
+        .. ((core.dailyLeft(nick, idx) > 0) and T("d_used") or T("d_free"))
       render()
     end)
   end
@@ -195,11 +199,11 @@ function M.open(ctx)
     busy = true
     u.loading(true, T("saving"), T("ld_sub"))
     spawn(function()
-      -- 1) sahiplik kontrolü + bilgi güncelleme
+      -- 1) sahiplik kontrolü (takma ad) + bilgi güncelleme
       local ok, err = core.mutateIndex(function(idx)
         for _, x in ipairs(idx.scripts) do
           if num(x.id) == num(e.id) then
-            if tonumber(x.owner) ~= uid then return false, core.E(lang, "not_owner") end
+            if core.ownerNickOf(x) ~= nickKey then return false, core.E(lang, "not_owner") end
             x.name, x.desc, x.image, x.edited = name, desc, img or 0, os.time()
             return true
           end
@@ -243,7 +247,7 @@ function M.open(ctx)
       local ok, err = core.mutateIndex(function(idx)
         for i, x in ipairs(idx.scripts) do
           if num(x.id) == num(e.id) then
-            if tonumber(x.owner) ~= uid then return false, core.E(lang, "not_owner") end
+            if core.ownerNickOf(x) ~= nickKey then return false, core.E(lang, "not_owner") end
             table.remove(idx.scripts, i)
             return true
           end
