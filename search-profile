@@ -1,4 +1,4 @@
--- search-profile | OYUNCU ARA + PROFİL (v1.0)  -> loadsystem deposuna "search-profile" adıyla yükle
+-- search-profile | OYUNCU ARA + PROFİL (v1.1)  -> loadsystem deposuna "search-profile" adıyla yükle
 -- =========================================================
 -- main-menu'deki OYUNCU ARA tuşu (veya scripthub) bu dosyayı indirir ve open(ctx) çağırır.
 --
@@ -9,6 +9,9 @@
 --  * Veriler: loadsystem/player (sadece takma ad + Roblox adı okunur, şifre okunmaz), roblox-game-star/profiles.json,
 --    roblox-game-star/hub-index.json. Gereken: hubcore v1.1
 --
+-- v1.1: Başkasının profilinde MESAJ GÖNDER tuşu: cr-chat açılır ve o oyuncuyla özel sohbet başlar (ARKADAŞ EKLE sohbet ekranında).
+--       Gereken: hubcore v1.2
+--
 -- ctx: { lang, accent, bg, anim, nick, player, onBack }
 
 local G = (type(getgenv) == "function" and getgenv()) or _G
@@ -16,7 +19,7 @@ local S = G.__LOADSYS or {}
 G.__LOADSYS = S
 
 local BASE = "https://raw.githubusercontent.com/scptr1155-gif/loadsystem/refs/heads/main/"
-local NEED = "1.1"
+local NEED = "1.2"
 
 local function loadCore()
   if type(S.CORE) == "table" and S.CORE.version == NEED then return S.CORE end
@@ -44,6 +47,7 @@ local STR = {
     edit_btn = "PROFİLİ DÜZENLE", f_status = "Durum (en fazla 40 karakter)", f_image = "Profil resmi ID (boş = Roblox avatarı)",
     f_bio = "Hakkında (en fazla 200 karakter)", save = "KAYDET", cancel = "İPTAL",
     saved = "Profil kaydedildi.", fail = "İşlem başarısız: ", bad_image = "Resim ID sadece rakamlardan oluşmalı.",
+    msg_btn = "MESAJ GÖNDER", ld_chat = "SOHBET YÜKLENİYOR",
   },
   en = {
     back = "← BACK", title = "Find Players", t_profile = "Profile", t_edit = "Edit Profile",
@@ -59,6 +63,7 @@ local STR = {
     edit_btn = "EDIT PROFILE", f_status = "Status (max 40 characters)", f_image = "Profile image ID (empty = Roblox avatar)",
     f_bio = "About (max 200 characters)", save = "SAVE", cancel = "CANCEL",
     saved = "Profile saved.", fail = "Failed: ", bad_image = "Image ID must contain digits only.",
+    msg_btn = "SEND MESSAGE", ld_chat = "LOADING CHAT",
   },
 }
 
@@ -327,6 +332,7 @@ function M.open(ctx)
   local sList = u.scroll(PAD + 424, 316, 400, 116, pv)
 
   local editBtn = u.pill(T("edit_btn"), PAD, 442, 300, 48, true, pv)
+  local chatBtn = u.pill(T("msg_btn"), PAD, 442, 300, 48, true, pv)
 
   local function clearScripts()
     for _, c in ipairs(sList:GetChildren()) do
@@ -390,6 +396,7 @@ function M.open(ctx)
     end
 
     editBtn.Visible = d.self == true
+    chatBtn.Visible = d.self ~= true
   end
 
   ----------------------------------------------------------
@@ -458,6 +465,40 @@ function M.open(ctx)
   editBtn.MouseButton1Click:Connect(function()
     if busy or view ~= "profile" then return end
     showEdit()
+  end)
+
+  -- MESAJ GÖNDER: cr-chat indirilir, bu ekran kapanır, o oyuncuyla özel sohbet açılır.
+  -- Sohbetten GERİ'ye basınca bu arama ekranı yeniden açılır.
+  chatBtn.MouseButton1Click:Connect(function()
+    if busy or view ~= "profile" or not shown or shown.self then return end
+    local target = shown.rec.nick
+    busy = true
+    u.loading(true, T("ld_chat"), T("ld_sub"))
+    spawn(function()
+      local mod = nil
+      local okG, src = pcall(function() return game:HttpGet(BASE .. "cr-chat?t=" .. tostring(os.time())) end)
+      if okG and type(src) == "string" and type(loadstring) == "function" then
+        local fn = loadstring(src)
+        if fn then
+          local okR, m = pcall(fn)
+          if okR and type(m) == "table" and type(m.open) == "function" then mod = m end
+        end
+      end
+      busy = false
+      if not u.alive() then return end
+      u.loading(false)
+      if not mod then u.toast(T("fail") .. "cr-chat", C.danger, 6) return end
+      local nctx = {}
+      for k, v in pairs(ctx) do nctx[k] = v end
+      nctx.chatWith = target
+      nctx.onBack = function() M.open(ctx) end
+      u.close()
+      local okO, errO = pcall(mod.open, nctx)
+      if not okO then
+        print("[search-profile] cr-chat acilamadi: " .. tostring(errO))
+        M.open(ctx)
+      end
+    end)
   end)
 
   cancelBtn.MouseButton1Click:Connect(function()
