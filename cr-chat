@@ -1,1 +1,505 @@
+-- cr-chat | CR CHAT (v1.0)  -> loadsystem deposuna "cr-chat" adıyla yükle
+-- =========================================================
+-- main-menu'deki CR CHAT tuşu veya search-profile'daki MESAJ GÖNDER tuşu bu dosyayı indirir ve
+-- open(ctx) çağırır.
+--
+--  * Sol: oyuncu ara (takma ad yazdıkça). Sonuçta MESAJ (özel sohbet) ve EKLE (arkadaş isteği).
+--    Aramasız: ARKADAŞLAR sekmesi (GENEL SOHBET + arkadaşlar) ve İSTEKLER sekmesi (kabul / reddet / iptal).
+--  * Sağ: sohbet. Mesajlar birkaç saniyede bir yenilenir. Gönder tuşu veya Enter.
+--  * Veriler roblox-game-star deposunda: friends.json, chat/*.json (hubcore v1.2 içindeki fonksiyonlarla).
+--
+-- ÖNEMLİ: Sohbet dosyaları herkese açık depoda durur, gizli değildir. Mesajlar GitHub'a yazıldığı
+-- için 1-3 saniye gecikmeli gelir. Gönderen adı istemciden gelir (sahte mesaj mümkündür).
+--
+-- ctx: { lang, accent, bg, anim, nick, player, onBack, chatWith (isteğe bağlı: bu takma adla özel sohbet aç) }
 
+local G = (type(getgenv) == "function" and getgenv()) or _G
+local S = G.__LOADSYS or {}
+G.__LOADSYS = S
+
+local BASE = "https://raw.githubusercontent.com/scptr1155-gif/loadsystem/refs/heads/main/"
+local NEED = "1.2"
+
+local function loadCore()
+  if type(S.CORE) == "table" and S.CORE.version == NEED then return S.CORE end
+  local ok, src = pcall(function() return game:HttpGet(BASE .. "hubcore?t=" .. tostring(os.time())) end)
+  if not ok or type(src) ~= "string" or type(loadstring) ~= "function" then return nil end
+  local fn = loadstring(src)
+  if not fn then return nil end
+  local okR, c = pcall(fn)
+  if okR and type(c) == "table" then return c end
+  return nil
+end
+
+local STR = {
+  tr = {
+    back = "← GERİ", title = "CR Chat", sub = "Oyuncu ara, arkadaş ekle, sohbet et",
+    search_ph = "Oyuncu ara (takma ad)...", tab_friends = "ARKADAŞLAR", tab_req = "İSTEKLER",
+    global = "GENEL SOHBET", global_sub = "Herkes burada yazabilir", friend_tag = "Arkadaş",
+    msg = "MESAJ", add = "EKLE", accept = "KABUL", decline = "RED", cancel_req = "İPTAL",
+    st_sent = "İstek gönderildi", st_friend = "Arkadaş", st_recv = "Sana istek gönderdi",
+    none = "Bu takma adla oyuncu bulunamadı.", no_friends = "Henüz arkadaşın yok. Yukarıdan oyuncu ara.",
+    no_req = "Bekleyen istek yok.", in_req = "Sana gelen istek", out_req = "Gönderdiğin istek",
+    pick = "Soldan bir sohbet seç veya oyuncu ara.", empty_chat = "Henüz mesaj yok. İlk mesajı sen yaz!",
+    loading = "Yükleniyor...", type_ph = "Mesaj yaz...", send = "GÖNDER", sending = "...",
+    slow = "Çok hızlı yazıyorsun, biraz bekle.", fail = "İşlem başarısız: ", list_fail = "Oyuncu listesi okunamadı.",
+    b_add = "ARKADAŞ EKLE", b_accept = "İSTEĞİ KABUL ET", b_remove = "ARKADAŞLIKTAN ÇIK", b_cancel = "İSTEĞİ İPTAL ET",
+    t_sent = "Arkadaş isteği gönderildi.", t_friend = "Artık arkadaşsınız.", t_removed = "Kaldırıldı.",
+    you = "sen",
+  },
+  en = {
+    back = "← BACK", title = "CR Chat", sub = "Find players, add friends, chat",
+    search_ph = "Find player (nickname)...", tab_friends = "FRIENDS", tab_req = "REQUESTS",
+    global = "GLOBAL CHAT", global_sub = "Everyone can write here", friend_tag = "Friend",
+    msg = "CHAT", add = "ADD", accept = "ACCEPT", decline = "DECLINE", cancel_req = "CANCEL",
+    st_sent = "Request sent", st_friend = "Friend", st_recv = "Sent you a request",
+    none = "No player found with this nickname.", no_friends = "You have no friends yet. Search for a player above.",
+    no_req = "No pending requests.", in_req = "Requests to you", out_req = "Requests you sent",
+    pick = "Pick a chat on the left or search for a player.", empty_chat = "No messages yet. Write the first one!",
+    loading = "Loading...", type_ph = "Write a message...", send = "SEND", sending = "...",
+    slow = "You are typing too fast, wait a bit.", fail = "Failed: ", list_fail = "Could not read the player list.",
+    b_add = "ADD FRIEND", b_accept = "ACCEPT REQUEST", b_remove = "REMOVE FRIEND", b_cancel = "CANCEL REQUEST",
+    t_sent = "Friend request sent.", t_friend = "You are friends now.", t_removed = "Removed.",
+    you = "you",
+  },
+}
+
+local MAX_TEXT = 200
+local POLL_CHAT = 3      -- sohbet yenileme aralığı (sn)
+local POLL_FRIENDS = 15  -- arkadaş listesi yenileme aralığı (sn)
+
+local M = {}
+
+function M.open(ctx)
+  ctx = ctx or {}
+  local core = loadCore()
+  if not core or type(core.sendChat) ~= "function" then
+    print("[cr-chat] hubcore v1.2 yuklenemedi (hubcore dosyasini guncelle)")
+    if type(ctx.onBack) == "function" then ctx.onBack() end
+    return
+  end
+  local lang = (ctx.lang == "en") and "en" or "tr"
+  local function T(k) return STR[lang][k] or STR.tr[k] or k end
+  local spawn, sleep, num = core.spawn, core.sleep, core.num
+  local myNick = core.currentNick(ctx)
+  local myKey = core.nickKey(myNick)
+
+  local u = core.ui(ctx, { name = "Chat", title = T("title"), sub = T("sub"), back = true, backText = T("back") })
+  if not u then return end
+  local C, FNT = u.C, u.FNT
+  local W, H, PAD = u.W, u.H, u.PAD
+  local AC, AR, ALN = Enum.TextXAlignment.Center, Enum.TextXAlignment.Right, Enum.TextXAlignment.Left
+  local TRUNC = Enum.TextTruncate.AtEnd
+  local LW = 290
+  local RX = PAD + LW + 14
+  local RW = W - PAD - RX
+
+  u.new("Frame", {
+    Size = UDim2.fromOffset(1, H - 96), Position = UDim2.fromOffset(PAD + LW + 6, 84), BackgroundColor3 = C.line,
+    BorderSizePixel = 0, ZIndex = 3,
+  }, u.window)
+
+  local function mkInput(x, y, w, h, ph, parent)
+    local f = u.new("Frame", {
+      Size = UDim2.fromOffset(w, h), Position = UDim2.fromOffset(x, y), BackgroundColor3 = C.card, BorderSizePixel = 0,
+      ClipsDescendants = true, ZIndex = 3,
+    }, parent or u.window)
+    u.round(f, 10)
+    u.stroke(f, C.line)
+    local box = u.new("TextBox", {
+      Size = UDim2.new(1, -24, 1, 0), Position = UDim2.fromOffset(12, 0), BackgroundTransparency = 1, Text = "",
+      PlaceholderText = ph, PlaceholderColor3 = C.faint, TextColor3 = C.text, TextSize = 13, Font = FNT.reg,
+      ClearTextOnFocus = false, TextXAlignment = ALN, ZIndex = 4,
+    }, f)
+    return box, f
+  end
+
+  ----------------------------------------------------------
+  -- Durum
+  ----------------------------------------------------------
+  local players = {}                 -- { nick, key }
+  local fdb = { links = {}, names = {} }
+  local tab = "friends"              -- "friends" | "req"
+  local current = nil                -- { kind = "global"|"dm", nick, key, file }
+  local msgs, lastI = {}, 0
+  local fetching, sending = false, false
+  local lastSend = 0
+  local renderList, renderMsgs, updateHeader, openDm, openGlobal, refreshFriends, refreshChat
+
+  ----------------------------------------------------------
+  -- SOL: arama + sekmeler + liste
+  ----------------------------------------------------------
+  local searchBox, searchFrame = mkInput(PAD, 84, LW, 38, T("search_ph"))
+  local tabFriends = u.pill(T("tab_friends"), PAD, 130, 141, 30, true)
+  local tabReq = u.pill(T("tab_req"), PAD + 149, 130, 141, 30, false)
+  local lscroll = u.scroll(PAD, 170, LW, 322)
+
+  local function styleTabs()
+    u.tw(tabFriends, { BackgroundColor3 = (tab == "friends") and u.accent or C.card }, 0.15)
+    u.tw(tabReq, { BackgroundColor3 = (tab == "req") and u.accent or C.card }, 0.15)
+    tabFriends.TextColor3 = (tab == "friends") and C.white or C.muted
+    tabReq.TextColor3 = (tab == "req") and C.white or C.muted
+  end
+
+  local function clearList()
+    for _, c in ipairs(lscroll:GetChildren()) do
+      if c.Name == "Card" or c.Name == "Msg" then core.safe(function() c:Destroy() end) end
+    end
+  end
+
+  local function msgRow(text, order)
+    u.label(lscroll, text, 0, 0, LW, 54, 12, FNT.med, C.faint,
+      { Name = "Msg", TextWrapped = true, TextXAlignment = AC, LayoutOrder = order or 1 })
+  end
+
+  -- Kart: tıklanırsa onClick çalışır; textW başlık/alt başlık genişliği
+  local function card(order, title, subtitle, onClick, textW)
+    local c = u.new("TextButton", {
+      Name = "Card", Size = UDim2.fromOffset(LW - 8, 54), BackgroundColor3 = C.card, BorderSizePixel = 0,
+      Text = "", AutoButtonColor = false, LayoutOrder = order, ZIndex = 3,
+    }, lscroll)
+    u.round(c, 12)
+    u.stroke(c, C.line)
+    c.MouseEnter:Connect(function() u.tw(c, { BackgroundColor3 = C.cardHi }, 0.12) end)
+    c.MouseLeave:Connect(function() u.tw(c, { BackgroundColor3 = C.card }, 0.12) end)
+    u.label(c, title, 10, 8, textW or (LW - 28), 20, 13, FNT.bold, C.text, { TextTruncate = TRUNC })
+    u.label(c, subtitle or "", 10, 29, textW or (LW - 28), 16, 11, FNT.med, C.muted, { TextTruncate = TRUNC })
+    if onClick then c.MouseButton1Click:Connect(onClick) end
+    return c
+  end
+
+  local function friendOp(fnName, nick, doneKey)
+    spawn(function()
+      local ok, res = core[fnName](myNick, nick, lang)
+      if not u.alive() then return end
+      if ok then
+        local key = doneKey
+        if fnName == "friendRequest" then key = (res == "friend") and "t_friend" or "t_sent" end
+        u.toast(T(key), C.ok, 3)
+      else
+        u.toast(T("fail") .. tostring(res), C.danger, 7)
+      end
+      refreshFriends()
+    end)
+  end
+
+  renderList = function()
+    clearList()
+    local q = string.lower(core.trim(searchBox.Text))
+
+    -- Oyuncu arama sonuçları
+    if q ~= "" then
+      local res = {}
+      for _, p in ipairs(players) do
+        if p.key ~= myKey and string.find(p.key, q, 1, true) then res[#res + 1] = p end
+      end
+      table.sort(res, function(a, b)
+        local sa, sb = (string.find(a.key, q, 1, true) == 1) and 0 or 1, (string.find(b.key, q, 1, true) == 1) and 0 or 1
+        if sa ~= sb then return sa < sb end
+        return a.key < b.key
+      end)
+      if #res == 0 then msgRow(T("none")) return end
+      for i = 1, math.min(#res, 20) do
+        local p = res[i]
+        local st = core.friendState(fdb, myNick, p.nick)
+        local sub = (st == "friend") and T("st_friend") or (st == "sent") and T("st_sent") or (st == "received") and T("st_recv") or ""
+        local c = card(i, p.nick, sub, function() openDm(p.nick) end, 128)
+        local mb = u.pill(T("msg"), LW - 8 - 138, 14, 62, 26, true, c)
+        mb.TextSize = 11
+        mb.MouseButton1Click:Connect(function() openDm(p.nick) end)
+        if st == "none" then
+          local ab = u.pill(T("add"), LW - 8 - 70, 14, 62, 26, false, c)
+          ab.TextSize = 11
+          ab.MouseButton1Click:Connect(function() friendOp("friendRequest", p.nick) end)
+        elseif st == "received" then
+          local ab = u.pill(T("accept"), LW - 8 - 70, 14, 62, 26, C.ok, c)
+          ab.TextSize = 11
+          ab.MouseButton1Click:Connect(function() friendOp("friendAccept", p.nick, "t_friend") end)
+        end
+      end
+      return
+    end
+
+    local fl = core.friendList(fdb, myNick)
+
+    if tab == "friends" then
+      card(1, T("global"), T("global_sub"), function() openGlobal() end)
+      if #fl.friends == 0 then
+        msgRow(T("no_friends"), 2)
+      else
+        for i, f in ipairs(fl.friends) do
+          card(i + 1, f.nick, T("friend_tag"), function() openDm(f.nick) end)
+        end
+      end
+      return
+    end
+
+    -- İstekler sekmesi
+    local order = 0
+    if #fl.incoming == 0 and #fl.outgoing == 0 then msgRow(T("no_req")) return end
+    for _, f in ipairs(fl.incoming) do
+      order = order + 1
+      local c = card(order, f.nick, T("in_req"), function() openDm(f.nick) end, 120)
+      local ab = u.pill(T("accept"), LW - 8 - 128, 14, 62, 26, C.ok, c)
+      ab.TextSize = 11
+      ab.MouseButton1Click:Connect(function() friendOp("friendAccept", f.nick, "t_friend") end)
+      local rb = u.pill(T("decline"), LW - 8 - 60, 14, 52, 26, C.danger, c)
+      rb.TextSize = 11
+      rb.MouseButton1Click:Connect(function() friendOp("friendRemove", f.nick, "t_removed") end)
+    end
+    for _, f in ipairs(fl.outgoing) do
+      order = order + 1
+      local c = card(order, f.nick, T("out_req"), function() openDm(f.nick) end, 140)
+      local cb = u.pill(T("cancel_req"), LW - 8 - 76, 14, 68, 26, false, c)
+      cb.TextSize = 11
+      cb.MouseButton1Click:Connect(function() friendOp("friendRemove", f.nick, "t_removed") end)
+    end
+  end
+
+  local function updateTabLabels()
+    local fl = core.friendList(fdb, myNick)
+    tabReq.Text = T("tab_req") .. ((#fl.incoming > 0) and (" (" .. #fl.incoming .. ")") or "")
+  end
+
+  tabFriends.MouseButton1Click:Connect(function() tab = "friends"; styleTabs(); renderList() end)
+  tabReq.MouseButton1Click:Connect(function() tab = "req"; styleTabs(); renderList() end)
+
+  local qTok = 0
+  searchBox:GetPropertyChangedSignal("Text"):Connect(function()
+    qTok = qTok + 1
+    local my = qTok
+    spawn(function()
+      sleep(0.25)
+      if my == qTok and u.alive() then renderList() end
+    end)
+  end)
+
+  ----------------------------------------------------------
+  -- SAĞ: başlık + mesajlar + yazma kutusu
+  ----------------------------------------------------------
+  local hTitle = u.label(u.window, "", RX, 84, RW - 166, 26, 18, FNT.bold, C.text, { TextTruncate = TRUNC })
+  local hSub = u.label(u.window, "", RX, 110, RW - 166, 16, 11, FNT.med, C.muted, { TextTruncate = TRUNC })
+  local hBtn = u.pill("", RX + RW - 156, 86, 156, 30, false)
+  hBtn.TextSize = 11
+  local mscroll = u.scroll(RX, 134, RW, 298)
+  local inBox, inFrame = mkInput(RX, 442, RW - 100, 48, T("type_ph"))
+  local sendBtn = u.pill(T("send"), RX + RW - 92, 442, 92, 48, true)
+  local pickLbl = u.label(u.window, T("pick"), RX, 220, RW, 60, 13, FNT.med, C.faint,
+    { TextWrapped = true, TextXAlignment = AC })
+
+  local function setChatVisible(v)
+    hTitle.Visible, hSub.Visible, mscroll.Visible = v, v, v
+    inFrame.Visible, sendBtn.Visible = v, v
+    pickLbl.Visible = not v
+    if not v then hBtn.Visible = false end
+  end
+  setChatVisible(false)
+
+  local function hhmm(ts)
+    local ok, s = pcall(os.date, "%H:%M", num(ts))
+    if ok and type(s) == "string" then return s end
+    return ""
+  end
+
+  local function clearMsgs()
+    for _, c in ipairs(mscroll:GetChildren()) do
+      if c.Name == "Row" or c.Name == "Msg" then core.safe(function() c:Destroy() end) end
+    end
+  end
+
+  local function scrollEnd()
+    core.delay(0.08, function()
+      if u.alive() then
+        core.safe(function() mscroll.CanvasPosition = Vector2.new(0, mscroll.AbsoluteCanvasSize.Y) end)
+      end
+    end)
+  end
+
+  renderMsgs = function(placeholder)
+    clearMsgs()
+    if placeholder then
+      u.label(mscroll, placeholder, 0, 0, RW, 50, 12, FNT.med, C.faint, { Name = "Msg", TextXAlignment = AC })
+      return
+    end
+    if #msgs == 0 then
+      u.label(mscroll, T("empty_chat"), 0, 0, RW, 50, 12, FNT.med, C.faint, { Name = "Msg", TextXAlignment = AC })
+      return
+    end
+    local maxBubble = RW - 90
+    for i, m in ipairs(msgs) do
+      local mine = (tostring(m.f) == myKey)
+      local txt = tostring(m.m or "")
+      local th, tw = core.textHeight(txt, 13, FNT.reg, maxBubble - 20)
+      local bw = math.max(48, math.min(maxBubble, math.ceil(tw) + 22))
+      local bh = math.ceil(th) + 16
+      local row = u.new("Frame", {
+        Name = "Row", Size = UDim2.fromOffset(RW - 8, 18 + bh), BackgroundTransparency = 1, LayoutOrder = i, ZIndex = 3,
+      }, mscroll)
+      local who = mine and T("you") or tostring(m.n or "?")
+      u.label(row, who .. "  ·  " .. hhmm(m.t), 4, 0, RW - 16, 16, 10, FNT.med, C.faint,
+        { TextXAlignment = mine and AR or ALN, TextTruncate = TRUNC })
+      local bub = u.new("Frame", {
+        Size = UDim2.fromOffset(bw, bh), Position = UDim2.fromOffset(mine and (RW - 8 - bw) or 0, 18),
+        BackgroundColor3 = mine and u.accent or C.card, BorderSizePixel = 0, ZIndex = 4,
+      }, row)
+      u.round(bub, 12)
+      if not mine then u.stroke(bub, C.line) end
+      u.label(bub, txt, 10, 8, bw - 20, math.ceil(th), 13, FNT.reg, mine and C.white or C.text,
+        { TextWrapped = true, TextYAlignment = Enum.TextYAlignment.Top, ZIndex = 5 })
+    end
+  end
+
+  updateHeader = function()
+    if not current then hBtn.Visible = false return end
+    if current.kind == "global" then
+      hTitle.Text, hSub.Text = T("global"), T("global_sub")
+      hBtn.Visible = false
+      return
+    end
+    hTitle.Text = current.nick
+    local st = core.friendState(fdb, myNick, current.nick)
+    hSub.Text = (st == "friend") and T("st_friend") or (st == "sent") and T("st_sent") or (st == "received") and T("st_recv") or ""
+    hBtn.Visible = true
+    local label = (st == "friend") and T("b_remove") or (st == "sent") and T("b_cancel") or (st == "received") and T("b_accept") or T("b_add")
+    hBtn.Text = label
+    hBtn.BackgroundColor3 = (st == "received") and C.ok or C.card
+    hBtn.TextColor3 = (st == "received") and C.white or C.text
+  end
+
+  hBtn.MouseButton1Click:Connect(function()
+    if not current or current.kind ~= "dm" then return end
+    local st = core.friendState(fdb, myNick, current.nick)
+    if st == "none" then friendOp("friendRequest", current.nick)
+    elseif st == "received" then friendOp("friendAccept", current.nick, "t_friend")
+    else friendOp("friendRemove", current.nick, "t_removed") end
+  end)
+
+  refreshChat = function(force)
+    local cur = current
+    if not cur or fetching then return end
+    fetching = true
+    local list = core.readChat(cur.file)
+    fetching = false
+    if cur ~= current or not u.alive() then return end
+    if #list == 0 and #msgs > 0 then return end   -- okuma başarısız sayılır, eldekini koru
+    local lastNew = (#list > 0) and num(list[#list].i) or 0
+    if force or lastNew ~= lastI or #list ~= #msgs then
+      msgs, lastI = list, lastNew
+      renderMsgs()
+      scrollEnd()
+    end
+  end
+
+  local function openChat(c)
+    current = c
+    msgs, lastI = {}, 0
+    setChatVisible(true)
+    updateHeader()
+    renderMsgs(T("loading"))
+    spawn(function() refreshChat(true) end)
+  end
+
+  openGlobal = function()
+    openChat({ kind = "global", nick = "global", key = "global", file = core.GLOBAL_CHAT })
+  end
+
+  openDm = function(nick)
+    nick = core.trim(nick)
+    if nick == "" or core.nickKey(nick) == myKey then return end
+    openChat({ kind = "dm", nick = nick, key = core.nickKey(nick), file = core.chatFile(myNick, nick) })
+  end
+
+  refreshFriends = function()
+    local db = core.readFriends()
+    if not u.alive() then return end
+    fdb = db
+    updateTabLabels()
+    renderList()
+    updateHeader()
+  end
+
+  ----------------------------------------------------------
+  -- Gönder
+  ----------------------------------------------------------
+  local function doSend()
+    if sending or not current then return end
+    local text = core.cleanText(core.trim(inBox.Text), MAX_TEXT)
+    if text == "" then return end
+    if os.clock() - lastSend < 2 then u.toast(T("slow"), C.muted, 2) return end
+    sending = true
+    lastSend = os.clock()
+    sendBtn.Text = T("sending")
+    local cur = current
+    spawn(function()
+      local keep = (cur.kind == "global") and 200 or 150
+      local ok, res = core.sendChat(cur.file, myNick, text, lang, keep)
+      sending = false
+      if not u.alive() then return end
+      sendBtn.Text = T("send")
+      if ok then
+        if cur == current then
+          inBox.Text = ""
+          refreshChat(true)
+        end
+      else
+        u.toast(T("fail") .. tostring(res), C.danger, 8)
+      end
+    end)
+  end
+  sendBtn.MouseButton1Click:Connect(doSend)
+  inBox.FocusLost:Connect(function(enter) if enter then doSend() end end)
+
+  u.backBtn.MouseButton1Click:Connect(function()
+    local back = ctx.onBack
+    u.close()
+    if type(back) == "function" then back() end
+  end)
+
+  ----------------------------------------------------------
+  -- İlk yükleme + yenileme döngüsü
+  ----------------------------------------------------------
+  styleTabs()
+  renderList()
+
+  spawn(function()
+    local list = core.readPlayerList()
+    local db = core.readProfiles()
+    local friends = core.readFriends()
+    if not u.alive() then return end
+    fdb = friends
+
+    local out, seen = {}, {}
+    local function add(nick)
+      nick = core.trim(nick)
+      if nick == "" then return end
+      local key = core.nickKey(nick)
+      if seen[key] then return end
+      seen[key] = true
+      out[#out + 1] = { nick = nick, key = key }
+    end
+    if list then for _, r in ipairs(list) do add(r.nick) end end
+    for key, p in pairs(db.profiles) do
+      if type(p) == "table" then add(tostring(p.nick or key)) end
+    end
+    players = out
+    if not list then u.toast(T("list_fail"), C.danger, 5) end
+    updateTabLabels()
+    renderList()
+
+    local target = ctx.chatWith and core.trim(tostring(ctx.chatWith)) or ""
+    if target ~= "" then openDm(target) end
+  end)
+
+  spawn(function()
+    local tick = 0
+    while u.alive() do
+      sleep(1)
+      tick = tick + 1
+      if not u.alive() then break end
+      if current and tick % POLL_CHAT == 0 then refreshChat(false) end
+      if tick % POLL_FRIENDS == 0 then refreshFriends() end
+    end
+  end)
+end
+
+return M
