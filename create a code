@@ -1,4 +1,4 @@
--- create a code | SCRIPT OLUŞTUR VE YAYINLA (v2.2)
+-- create a code | SCRIPT OLUŞTUR VE YAYINLA (v2.3)
 -- =========================================================
 -- scripthub'daki CREATE tuşu bu dosyayı indirir ve open(ctx) çağırır.
 -- Form: script adı, resim ID, açıklama, kod. YAYINLA tuşu:
@@ -8,18 +8,24 @@
 --   3. Kodu o ID'li dosya olarak yazar (örn. 000000001) ve index'e kaydı ekler.
 --   (main-file dosyasına dokunulmaz.)
 --
--- v2.2 değişiklikleri:
--- * api-key okuma daha sağlam: tırnak, "Bearer ", "token " gibi fazlalıkları temizler.
--- * Hata olursa kaç anahtar okunduğu ve anahtarın ilk harfleri toast'ta görünür
---   (anahtarın kendisi ASLA gösterilmez / yazdırılmaz).
--- * Konsola [create] satırları yazılır (kaç anahtar, uzunluk, ilk 4 harf).
+-- v2.3 düzeltmeleri:
+-- * "token xxx" / "Bearer xxx" önekleri artık gerçekten temizleniyor
+--   (eski sürüm boşlukları önce sildiği için bu önekleri hiç yakalayamıyordu).
+-- * req(): sunucu hata kodu verdiğinde (401/403/404/409/422...) o kod olduğu gibi
+--   döner; eskiden diğer yöntemler de boşuna deneniyordu ve gerçek hata kaybolabiliyordu.
+-- * Kod dosyası yazılırken 409 (aynı anda yazım çakışması) artık aynı ID ile
+--   yeniden denenir; eskiden doğrudan "yazılamadı" diyordu.
+-- * 422 art arda gelirse GitHub'ın verdiği asıl mesaj gösterilir.
+-- * Boş (200 ama gövdesiz) yanıt ve geçersiz yanıt durumları ayrıldı.
 --
 -- api-key dosyası biçimi (her satır bir anahtar, # ile başlayan satırlar yok sayılır):
 --   github_pat_xxx...     düz anahtar (GitHub herkese açık depoda iptal eder!)
---   rev:<ters yazılmış>   anahtarın ters çevrilmiş hali  (ÖNERİLEN)
+--   rev:<ters yazılmış>   anahtarın ters çevrilmiş hali
 --   b64:<base64>          anahtarın base64 hali
--- Not: rev: veya b64: sadece GitHub'ın otomatik iptalini atlatır, gizlilik DEĞİLDİR.
---      Anahtarı sadece roblox-game-star deposuna (Contents: read/write) yetkili yap.
+-- UYARI: api-key dosyası herkese açık depoda duruyorsa anahtarı HERKES okuyabilir
+--   ve roblox-game-star deposuna (ve yetkisi olan her şeye) yazabilir. rev:/b64:
+--   gizlilik sağlamaz. Anahtarı sadece roblox-game-star deposuna
+--   (Contents: read/write) yetkili yap.
 --
 -- ctx: { lang, accent, bg, anim, nick, player, onBack }
 
@@ -86,7 +92,7 @@ local STR = {
     write_fail = "Kod yazılamadı", conflict = "Çakışma, tekrar dene.",
     id_full = "ID sınırına ulaşıldı.",
     retry_hint = " (Aynı kodla tekrar basarsan yine de yayınlanır.)",
-    key_info = "okunan anahtar", key_start = "başlangıç", key_len = "uzunluk",
+    key_info = "okunan anahtar",
   },
   en = {
     back = "← BACK", title = "Create Script", sub = "Publish your script; anyone can call it by ID",
@@ -105,7 +111,7 @@ local STR = {
     write_fail = "Could not write code", conflict = "Conflict, try again.",
     id_full = "ID limit reached.",
     retry_hint = " (Press again with the same code to publish anyway.)",
-    key_info = "keys read", key_start = "starts with", key_len = "length",
+    key_info = "keys read",
   },
 }
 
@@ -265,7 +271,7 @@ local function jsonDecode(str)
     local s = pos
     while pos <= len do
       local c = str:sub(pos, pos)
-      if c:match("[%d%+%-%.%deE]") then pos = pos + 1 else break end
+      if c:match("[%d%+%-%.eE]") then pos = pos + 1 else break end
     end
     return tonumber(str:sub(s, pos - 1))
   end
@@ -391,8 +397,8 @@ end
 local function callTimeout(fn, timeout)
   local box = { done = false }
   spawn(function()
-    local ok, a, b = pcall(fn)
-    box.ok, box.a, box.b = ok, a, b
+    local ok, a = pcall(fn)
+    box.ok, box.a = ok, a
     box.done = true
   end)
   local waited = 0
@@ -402,10 +408,12 @@ local function callTimeout(fn, timeout)
   end
   if not box.done then return nil, "zaman asimi" end
   if not box.ok then return nil, tostring(box.a) end
-  return box.a, box.b
+  return box.a
 end
 
 -- Dönüş: durumKodu, govde   |   nil, hataMetni ("no_req" = hiç yöntem yok)
+-- Sunucu herhangi bir HTTP kodu döndürdüyse (200, 401, 404, 409, 422...) o kod
+-- olduğu gibi döner; yedek yöntemler sadece sunucuya hiç ulaşılamazsa denenir.
 local function req(url, method, body, headers)
   method = method or "GET"
   local providers = {}
@@ -437,9 +445,11 @@ local function req(url, method, body, headers)
     if type(res) == "table" then
       local code = tonumber(res.StatusCode or res.Status or res.status_code or res.code) or 0
       local txt = res.Body or res.body or res.Content or ""
-      return code, tostring(txt)
+      if code > 0 then return code, tostring(txt) end
+      lastErr = "gecersiz yanit"
+    else
+      lastErr = tostring(err or "yanit yok")
     end
-    lastErr = tostring(err or res)
   end
   return nil, lastErr
 end
@@ -464,13 +474,15 @@ local function readKeys()
 
   local keys = {}
   for line in (src .. "\n"):gmatch("(.-)\n") do
-    line = line:gsub("%s+", "")
+    line = trim(line)
     if line ~= "" and line:sub(1, 1) ~= "#" then
-      -- tırnak ve yaygın fazlalıkları temizle
+      -- tırnakları temizle
       line = line:gsub("[\"'`]", "")
-      if line:sub(1, 7):lower() == "bearer:" then line = line:sub(8)
-      elseif line:sub(1, 6):lower() == "bearer" then line = line:sub(7) end
-      if line:sub(1, 6):lower() == "token:" then line = line:sub(7) end
+      -- "Bearer xxx" / "token xxx" / "Bearer: xxx" önekleri (boşluklar silinmeden ÖNCE)
+      line = trim(line)
+      line = line:gsub("^[Bb][Ee][Aa][Rr][Ee][Rr]:?%s*", "")
+      line = line:gsub("^[Tt][Oo][Kk][Ee][Nn]:?%s*", "")
+      line = line:gsub("%s+", "")
 
       if line:sub(1, 4) == "rev:" then line = line:sub(5):reverse()
       elseif line:sub(1, 4) == "b64:" then line = b64decode(line:sub(5)) end
@@ -545,7 +557,11 @@ local function publishWith(key, d, T)
       end
 
       local wrote = false
-      for _ = 1, 8 do
+      local conflicts = 0
+      local lastMsg = ""
+      local n = 0
+      while n < 8 do
+        n = n + 1
         if id > MAX_ID then return false, T("id_full") end
         local name9 = string.format("%09d", id)
         local cw, bw = req(API .. name9, "PUT", jsonEncode({
@@ -558,13 +574,23 @@ local function publishWith(key, d, T)
         end
         if cw == 401 or cw == 403 then return false, T("bad_key") .. " [" .. ghMsg(bw) .. "]", true end
         if cw == 404 then return false, T("no_repo"), true end
-        if cw == 422 then
+        if cw == 409 and conflicts < 3 then
+          -- aynı anda başka yazım oldu: aynı ID ile kısa beklemeyle tekrar dene
+          conflicts = conflicts + 1
+          n = n - 1
+          sleep(1)
+        elseif cw == 422 then
+          lastMsg = ghMsg(bw)
           id = id + 1 -- bu ID dolu, sıradakini dene
         else
-          return false, T("write_fail") .. " (HTTP " .. tostring(cw) .. ")"
+          return false, T("write_fail") .. " (HTTP " .. tostring(cw) .. ") " .. ghMsg(bw)
         end
       end
-      if not wrote then return false, T("write_fail") end
+      if not wrote then
+        local extra = ""
+        if lastMsg ~= "" then extra = " [" .. lastMsg .. "]" end
+        return false, T("write_fail") .. extra
+      end
       wroteId = id
     end
 
@@ -600,6 +626,7 @@ local function publishWith(key, d, T)
       return false, T("idx_write_fail") .. string.format("%09d", id) .. " (HTTP " .. tostring(ci) .. ")"
     end
     -- 409/422: başkası aynı anda yayınladı; index'i tekrar okuyup dene (kod dosyası korunur)
+    sleep(0.5)
   end
   return false, T("conflict")
 end
