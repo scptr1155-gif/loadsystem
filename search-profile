@@ -19,7 +19,7 @@ local S = G.__LOADSYS or {}
 G.__LOADSYS = S
 
 local BASE = "https://raw.githubusercontent.com/scptr1155-gif/loadsystem/refs/heads/main/"
-local NEED = "1.2"
+local NEED = "1.3"
 
 local function loadCore()
   if type(S.CORE) == "table" and S.CORE.version == NEED then return S.CORE end
