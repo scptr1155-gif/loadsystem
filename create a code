@@ -1,11 +1,14 @@
--- create a code | SCRIPT OLUŞTUR VE YAYINLA (v3.0)
+-- create a code | SCRIPT OLUŞTUR VE YAYINLA (v3.1)
 -- =========================================================
 -- scripthub'daki CREATE tuşu bu dosyayı indirir ve open(ctx) çağırır.
+-- v3.1:
+-- * Her kayda ownerNick (yayınlayan takma ad) eklenir; Studio/Profil bunu kullanır.
+--   owner (UserId) bilgi olarak saklanmaya devam eder.
+-- * Günlük 1 script limiti artık TAKMA AD başınadır (UTC günü).
 -- v3.0:
 -- * YAYINLA'ya basınca 60 sn'lik bekleme ekranı açılır; yayın bu sürede arka planda yapılır.
 --   Yayın hata verirse beklemeden hata gösterilir.
 -- * Günde 1 script (UTC günü). Hak bittiyse beklemeye hiç girmez.
--- * Her kayıtta owner = UserId saklanır (Studio/Profil bunu kullanır).
 -- * GitHub/JSON/api-key mantığı artık hubcore içinde.
 --
 -- Not: api-key dosyası herkese açık depodaysa anahtarı herkes okuyabilir (ters yazmak gizlemez).
@@ -16,9 +19,10 @@ G.__LOADSYS = S
 
 local BASE = "https://raw.githubusercontent.com/scptr1155-gif/loadsystem/refs/heads/main/"
 local WAIT = 60
+local NEED = "1.1"
 
 local function loadCore()
-  if type(S.CORE) == "table" then return S.CORE end
+  if type(S.CORE) == "table" and S.CORE.version == NEED then return S.CORE end
   local ok, src = pcall(function() return game:HttpGet(BASE .. "hubcore?t=" .. tostring(os.time())) end)
   if not ok or type(src) ~= "string" or type(loadstring) ~= "function" then return nil end
   local fn = loadstring(src)
@@ -68,7 +72,7 @@ function M.open(ctx)
   local lang = (ctx.lang == "en") and "en" or "tr"
   local function T(k) return STR[lang][k] or STR.tr[k] or k end
   local spawn, sleep = core.spawn, core.sleep
-  local nick = tostring(ctx.nick or "Player")
+  local nick = core.currentNick(ctx)
 
   local u = core.ui(ctx, { name = "Create", title = T("title"), sub = T("sub"), back = true, backText = T("back") })
   if not u then return end
@@ -87,7 +91,7 @@ function M.open(ctx)
     local wroteId = nil
     return core.mutateIndex(function(idx, h)
       if not wroteId then
-        local left = core.dailyLeft(d.owner, idx)
+        local left = core.dailyLeft(d.ownerNick, idx)
         if left > 0 then return false, string.format(T("daily"), math.ceil(left / 3600)) end
 
         local id = math.max(1, math.floor(tonumber(idx.next) or 1))
@@ -130,7 +134,8 @@ function M.open(ctx)
       end
       if not exists then
         idx.scripts[#idx.scripts + 1] = {
-          id = wroteId, name = d.name, author = d.author, owner = d.owner, desc = d.desc, image = d.image or 0,
+          id = wroteId, name = d.name, author = d.author, owner = d.owner, ownerNick = d.ownerNick,
+          desc = d.desc, image = d.image or 0,
           rating = 0, good = 0, bad = 0, uses = 0, created = os.time(),
         }
       end
@@ -166,13 +171,17 @@ function M.open(ctx)
 
     local imgId = tonumber(core.trim(fImage.Text):match("%d+") or "")
     local uid = core.userId()
-    local data = { name = name, desc = desc, code = code, author = core.cleanText(nick, 30), image = imgId, owner = uid }
+    local nickClean = core.cleanText(nick, 30)
+    local data = {
+      name = name, desc = desc, code = code, author = nickClean, ownerNick = nickClean,
+      image = imgId, owner = uid,
+    }
     publishing = true
     pubBtn.Text = T("publishing")
 
     spawn(function()
       -- günlük hak önce kontrol edilir: hak yoksa beklemeye girilmez
-      local left = core.dailyLeft(uid, core.readIndex())
+      local left = core.dailyLeft(nickClean, core.readIndex())
       if left > 0 then
         publishing = false
         if u.alive() then
