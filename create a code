@@ -1,4 +1,4 @@
--- create a code | SCRIPT OLUŞTUR VE YAYINLA (v2.3)
+-- create a code | SCRIPT OLUŞTUR VE YAYINLA (v2.4)
 -- =========================================================
 -- scripthub'daki CREATE tuşu bu dosyayı indirir ve open(ctx) çağırır.
 -- Form: script adı, resim ID, açıklama, kod. YAYINLA tuşu:
@@ -8,22 +8,24 @@
 --   3. Kodu o ID'li dosya olarak yazar (örn. 000000001) ve index'e kaydı ekler.
 --   (main-file dosyasına dokunulmaz.)
 --
+-- v2.4: api-key dosyasındaki anahtar TERS yazılmış kabul edilir. Okununca ÖNCE
+--   ters çevrilir, sonra işlenir (önek temizleme, uzunluk kontrolü).
+--   Güvenlik ağı: ters çevrilmiş hali anahtara benzemiyor ama dosyadaki hali
+--   anahtara benziyorsa (github_pat_ / ghp_ ...) dosyadaki hali kullanılır.
 -- v2.3 düzeltmeleri:
--- * "token xxx" / "Bearer xxx" önekleri artık gerçekten temizleniyor
---   (eski sürüm boşlukları önce sildiği için bu önekleri hiç yakalayamıyordu).
+-- * "token xxx" / "Bearer xxx" önekleri artık gerçekten temizleniyor.
 -- * req(): sunucu hata kodu verdiğinde (401/403/404/409/422...) o kod olduğu gibi
---   döner; eskiden diğer yöntemler de boşuna deneniyordu ve gerçek hata kaybolabiliyordu.
--- * Kod dosyası yazılırken 409 (aynı anda yazım çakışması) artık aynı ID ile
---   yeniden denenir; eskiden doğrudan "yazılamadı" diyordu.
+--   döner; eskiden diğer yöntemler de boşuna deneniyordu.
+-- * Kod dosyası yazılırken 409 (aynı anda yazım çakışması) aynı ID ile yeniden denenir.
 -- * 422 art arda gelirse GitHub'ın verdiği asıl mesaj gösterilir.
 -- * Boş (200 ama gövdesiz) yanıt ve geçersiz yanıt durumları ayrıldı.
 --
 -- api-key dosyası biçimi (her satır bir anahtar, # ile başlayan satırlar yok sayılır):
---   github_pat_xxx...     düz anahtar (GitHub herkese açık depoda iptal eder!)
---   rev:<ters yazılmış>   anahtarın ters çevrilmiş hali
---   b64:<base64>          anahtarın base64 hali
+--   <ters yazılmış anahtar>   (ör. github_pat_ABC  ->  CBA_tap_buhtig)
+--   rev:<ters yazılmış>       (rev: öneki de kabul edilir, aynı işi yapar)
+--   b64:<base64>              anahtarın base64 hali (ters çevrilmez)
 -- UYARI: api-key dosyası herkese açık depoda duruyorsa anahtarı HERKES okuyabilir
---   ve roblox-game-star deposuna (ve yetkisi olan her şeye) yazabilir. rev:/b64:
+--   ve roblox-game-star deposuna (ve yetkisi olan her şeye) yazabilir. Ters yazmak
 --   gizlilik sağlamaz. Anahtarı sadece roblox-game-star deposuna
 --   (Contents: read/write) yetkili yap.
 --
@@ -463,8 +465,13 @@ end
 
 --------------------------------------------------------------
 -- API anahtarı (loadsystem/api-key)
+-- Dosyadaki anahtar TERS yazılmıştır: okununca ÖNCE ters çevrilir.
 -- Dönüş: anahtarListesi, bilgiMetni
 --------------------------------------------------------------
+local function looksLikeToken(s)
+  return s:match("^github_pat_") ~= nil or s:match("^gh[pousr]_") ~= nil
+end
+
 local function readKeys()
   local ok, src = pcall(function() return game:HttpGet(KEY_URL .. "?t=" .. tostring(os.time())) end)
   if not ok or type(src) ~= "string" or src:sub(1, 14) == "404: Not Found" then
@@ -472,23 +479,36 @@ local function readKeys()
     return {}, "api-key okunamadi"
   end
 
+  src = src:gsub("\239\187\191", "") -- BOM
   local keys = {}
   for line in (src .. "\n"):gmatch("(.-)\n") do
     line = trim(line)
     if line ~= "" and line:sub(1, 1) ~= "#" then
-      -- tırnakları temizle
+      -- tırnakları ve boşlukları at
       line = line:gsub("[\"'`]", "")
-      -- "Bearer xxx" / "token xxx" / "Bearer: xxx" önekleri (boşluklar silinmeden ÖNCE)
-      line = trim(line)
-      line = line:gsub("^[Bb][Ee][Aa][Rr][Ee][Rr]:?%s*", "")
-      line = line:gsub("^[Tt][Oo][Kk][Ee][Nn]:?%s*", "")
       line = line:gsub("%s+", "")
 
-      if line:sub(1, 4) == "rev:" then line = line:sub(5):reverse()
-      elseif line:sub(1, 4) == "b64:" then line = b64decode(line:sub(5)) end
+      local key
+      if line:sub(1, 4) == "b64:" then
+        key = b64decode(line:sub(5))
+      else
+        if line:sub(1, 4) == "rev:" then line = line:sub(5) end
+        -- ÖNCE TERS ÇEVİR
+        local reversed = line:reverse()
+        if looksLikeToken(reversed) or not looksLikeToken(line) then
+          key = reversed
+        else
+          key = line -- dosyada zaten düz yazılmış
+        end
+      end
 
-      line = line:gsub("%s+", "")
-      if #line >= 20 then keys[#keys + 1] = line end
+      -- "Bearer xxx" / "token xxx" önekleri
+      key = trim(key)
+      key = key:gsub("^[Bb][Ee][Aa][Rr][Ee][Rr]:?%s*", "")
+      key = key:gsub("^[Tt][Oo][Kk][Ee][Nn]:?%s*", "")
+      key = key:gsub("%s+", "")
+
+      if #key >= 20 then keys[#keys + 1] = key end
     end
   end
 
