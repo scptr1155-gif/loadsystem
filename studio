@@ -1,1 +1,280 @@
+-- studio | STUDİO (v1.0)  -> loadsystem deposuna "studio" adıyla yükle
+-- =========================================================
+-- Sadece KENDİ yayınladığın scriptler (owner == senin UserId'in) listelenir.
+-- Düzenle: ad, resim, açıklama, kod. Sil: iki kez basarak onay.
+-- Kaydet/Sil sırasında sahiplik index'te tekrar kontrol edilir; başka hesap düzenleyemez.
+--
+-- ctx: { lang, accent, bg, anim, nick, player, onBack }
 
+local G = (type(getgenv) == "function" and getgenv()) or _G
+local S = G.__LOADSYS or {}
+G.__LOADSYS = S
+
+local BASE = "https://raw.githubusercontent.com/scptr1155-gif/loadsystem/refs/heads/main/"
+
+local function loadCore()
+  if type(S.CORE) == "table" then return S.CORE end
+  local ok, src = pcall(function() return game:HttpGet(BASE .. "hubcore?t=" .. tostring(os.time())) end)
+  if not ok or type(src) ~= "string" or type(loadstring) ~= "function" then return nil end
+  local fn = loadstring(src)
+  if not fn then return nil end
+  local okR, c = pcall(fn)
+  if okR and type(c) == "table" then return c end
+  return nil
+end
+
+local STR = {
+  tr = {
+    back = "← GERİ", title = "Studio", sub = "Sadece senin yayınladığın scriptler",
+    loading = "Yükleniyor...", empty = "Henüz script yayınlamadın. CREATE ile ilk scriptini yayınla.",
+    strip = "Yayınlanan: %d    ▶ %d    👍 %d    👎 %d", d_free = "Bugünkü yayın hakkın: VAR", d_used = "Bugünkü yayın hakkın: KULLANILDI",
+    edit = "DÜZENLE", f_name = "Script adı", f_image = "Resim ID (rbxassetid)", f_desc = "Açıklama",
+    f_code = "Script kodu (Lua)", save = "KAYDET", cancel = "İPTAL", delete = "SİL", sure = "EMİN MİSİN?",
+    saving = "KAYDEDİLİYOR", deleting = "SİLİNİYOR", ld_sub = "LÜTFEN BEKLE", code_loading = "-- kod yükleniyor...",
+    bad_name = "Script adı 3-40 karakter olmalı.", bad_code = "Script kodu boş olamaz.",
+    bad_syntax = "Kodda sözdizimi hatası: ", saved = "Kaydedildi.", deleted = "Script silindi.",
+    fail = "İşlem başarısız: ", code_fail = "Kod indirilemedi, kaydetme kapalı.",
+  },
+  en = {
+    back = "← BACK", title = "Studio", sub = "Only scripts you published",
+    loading = "Loading...", empty = "You haven't published anything yet. Use CREATE to publish your first script.",
+    strip = "Published: %d    ▶ %d    👍 %d    👎 %d", d_free = "Today's publish: AVAILABLE", d_used = "Today's publish: USED",
+    edit = "EDIT", f_name = "Script name", f_image = "Image ID (rbxassetid)", f_desc = "Description",
+    f_code = "Script code (Lua)", save = "SAVE", cancel = "CANCEL", delete = "DELETE", sure = "ARE YOU SURE?",
+    saving = "SAVING", deleting = "DELETING", ld_sub = "PLEASE WAIT", code_loading = "-- loading code...",
+    bad_name = "Script name must be 3-40 characters.", bad_code = "Script code cannot be empty.",
+    bad_syntax = "Syntax error in code: ", saved = "Saved.", deleted = "Script deleted.",
+    fail = "Failed: ", code_fail = "Could not download code, saving disabled.",
+  },
+}
+
+local M = {}
+
+function M.open(ctx)
+  ctx = ctx or {}
+  local core = loadCore()
+  if not core then
+    print("[studio] hubcore yuklenemedi")
+    if type(ctx.onBack) == "function" then ctx.onBack() end
+    return
+  end
+  local lang = (ctx.lang == "en") and "en" or "tr"
+  local function T(k) return STR[lang][k] or STR.tr[k] or k end
+  local spawn, num, pad = core.spawn, core.num, core.pad
+  local uid = core.userId()
+
+  local u = core.ui(ctx, { name = "Studio", title = T("title"), sub = T("sub"), back = true, backText = T("back") })
+  if not u then return end
+  local C, FNT = u.C, u.FNT
+  local W, H, PAD, IW = u.W, u.H, u.PAD, u.IW
+  local AC = Enum.TextXAlignment.Center
+
+  local strip = u.label(u.window, T("loading"), PAD, 78, IW, 20, 12, FNT.med, C.muted)
+  local scroll = u.scroll(PAD, 108, IW, 384)
+
+  local entries, editing, busy, codeReady = {}, nil, false, false
+
+  ----------------------------------------------------------
+  -- Düzenleme görünümü
+  ----------------------------------------------------------
+  local ed = u.new("Frame", { Size = UDim2.fromOffset(W, H), BackgroundTransparency = 1, Visible = false, ZIndex = 3 }, u.window)
+  local fName  = u.input(84, 40, T("f_name"), false, ed)
+  local fImage = u.input(132, 40, T("f_image"), false, ed)
+  local fDesc  = u.input(180, 40, T("f_desc"), false, ed)
+  local fCode  = u.input(228, 170, T("f_code"), true, ed)
+  local saveBtn = u.pill(T("save"), PAD, 412, 500, 48, true, ed)
+  local cancelBtn = u.pill(T("cancel"), PAD + 512, 412, 150, 48, false, ed)
+  local delBtn = u.pill(T("delete"), PAD + 674, 412, 150, 48, C.danger, ed)
+
+  local function clearList()
+    for _, c in ipairs(scroll:GetChildren()) do
+      if c.Name == "Card" or c.Name == "Msg" then core.safe(function() c:Destroy() end) end
+    end
+  end
+
+  local function showList()
+    editing = nil
+    ed.Visible = false
+    scroll.Visible = true
+    strip.Visible = true
+    u.title.Text = T("title")
+  end
+
+  local loadList
+
+  local function showEdit(e)
+    editing = e
+    codeReady = false
+    scroll.Visible = false
+    strip.Visible = false
+    ed.Visible = true
+    u.title.Text = tostring(e.name or "?")
+    fName.Text = tostring(e.name or "")
+    fImage.Text = (tonumber(e.image) and num(e.image) > 0) and tostring(math.floor(num(e.image))) or ""
+    fDesc.Text = tostring(e.desc or "")
+    fCode.Text = T("code_loading")
+    spawn(function()
+      local code = core.httpGet(core.STORE .. pad(math.floor(num(e.id))))
+      if not u.alive() or editing ~= e then return end
+      if code then
+        fCode.Text = code
+        codeReady = true
+      else
+        fCode.Text = ""
+        u.toast(T("code_fail"), C.danger, 6)
+      end
+    end)
+  end
+
+  ----------------------------------------------------------
+  -- Liste
+  ----------------------------------------------------------
+  local function render()
+    clearList()
+    if #entries == 0 then
+      u.label(scroll, T("empty"), 0, 0, IW, 80, 13, FNT.med, C.faint, { Name = "Msg", TextWrapped = true, TextXAlignment = AC })
+      return
+    end
+    for i, e in ipairs(entries) do
+      local card = u.new("Frame", {
+        Name = "Card", Size = UDim2.fromOffset(IW - 8, 64), BackgroundColor3 = C.card, BorderSizePixel = 0,
+        LayoutOrder = i, ZIndex = 3,
+      }, scroll)
+      u.round(card, 12)
+      u.stroke(card, C.line)
+      local thumb = u.new("ImageLabel", {
+        Size = UDim2.fromOffset(44, 44), Position = UDim2.fromOffset(10, 10), BackgroundColor3 = C.cardHi,
+        BorderSizePixel = 0, ScaleType = Enum.ScaleType.Crop, ZIndex = 4,
+      }, card)
+      u.round(thumb, 9)
+      local img = tonumber(e.image)
+      if img and img > 0 then core.safe(function() thumb.Image = "rbxassetid://" .. tostring(math.floor(img)) end) end
+      u.label(card, tostring(e.name or "?"), 64, 10, IW - 220, 20, 14, FNT.bold, C.text, { TextTruncate = Enum.TextTruncate.AtEnd })
+      u.label(card, "ID " .. pad(math.floor(num(e.id))) .. "    👍 " .. math.floor(num(e.good)) .. "  👎 " .. math.floor(num(e.bad))
+        .. "    ▶ " .. math.floor(num(e.uses)), 64, 34, IW - 220, 16, 11, FNT.med, C.muted)
+      local eb = u.pill(T("edit"), IW - 8 - 122, 15, 110, 34, true, card)
+      eb.MouseButton1Click:Connect(function() if not busy then showEdit(e) end end)
+    end
+  end
+
+  loadList = function()
+    strip.Text = T("loading")
+    spawn(function()
+      local idx = core.readIndex()
+      if not u.alive() then return end
+      local st = core.statsFor(uid, idx)
+      entries = st.mine
+      strip.Text = string.format(T("strip"), st.count, st.uses, st.good, st.bad) .. "    |    "
+        .. ((core.dailyLeft(uid, idx) > 0) and T("d_used") or T("d_free"))
+      render()
+    end)
+  end
+
+  ----------------------------------------------------------
+  -- Kaydet / Sil / İptal
+  ----------------------------------------------------------
+  saveBtn.MouseButton1Click:Connect(function()
+    if busy or not editing then return end
+    if not codeReady then u.toast(T("code_fail"), C.danger, 5) return end
+    local e = editing
+    local name = core.cleanText(core.trim(fName.Text), 40)
+    local desc = core.cleanText(core.trim(fDesc.Text), 200)
+    local code = core.cleanCode(fCode.Text)
+    local nameLen = core.ulen(name)
+    if nameLen < 3 or nameLen > 40 then u.toast(T("bad_name"), C.danger) return end
+    if core.trim(code) == "" then u.toast(T("bad_code"), C.danger) return end
+    if type(loadstring) == "function" then
+      local fn, err = loadstring(code)
+      if not fn then
+        local fixed = core.fixQuotes(code)
+        if fixed ~= code and loadstring(fixed) then code = fixed
+        else u.toast(T("bad_syntax") .. core.shortErr(err), C.danger, 8) return end
+      end
+    end
+    local img = tonumber(core.trim(fImage.Text):match("%d+") or "")
+    busy = true
+    u.loading(true, T("saving"), T("ld_sub"))
+    spawn(function()
+      -- 1) sahiplik kontrolü + bilgi güncelleme
+      local ok, err = core.mutateIndex(function(idx)
+        for _, x in ipairs(idx.scripts) do
+          if num(x.id) == num(e.id) then
+            if tonumber(x.owner) ~= uid then return false, core.E(lang, "not_owner") end
+            x.name, x.desc, x.image, x.edited = name, desc, img or 0, os.time()
+            return true
+          end
+        end
+        return false, core.E(lang, "not_found")
+      end, lang)
+      -- 2) kod dosyası
+      if ok then ok, err = core.putFile(pad(math.floor(num(e.id))), code, "hub: edit " .. pad(math.floor(num(e.id))), lang) end
+      busy = false
+      if not u.alive() then return end
+      u.loading(false)
+      if ok then
+        e.name, e.desc, e.image = name, desc, img or 0
+        u.toast(T("saved"), C.ok, 4)
+        showList()
+        loadList()
+      else
+        u.toast(T("fail") .. tostring(err), C.danger, 8)
+      end
+    end)
+  end)
+
+  local armed = false
+  delBtn.MouseButton1Click:Connect(function()
+    if busy or not editing then return end
+    if not armed then
+      armed = true
+      delBtn.Text = T("sure")
+      core.delay(4, function()
+        armed = false
+        if u.alive() then delBtn.Text = T("delete") end
+      end)
+      return
+    end
+    armed = false
+    delBtn.Text = T("delete")
+    local e = editing
+    busy = true
+    u.loading(true, T("deleting"), T("ld_sub"))
+    spawn(function()
+      local ok, err = core.mutateIndex(function(idx)
+        for i, x in ipairs(idx.scripts) do
+          if num(x.id) == num(e.id) then
+            if tonumber(x.owner) ~= uid then return false, core.E(lang, "not_owner") end
+            table.remove(idx.scripts, i)
+            return true
+          end
+        end
+        return false, core.E(lang, "not_found")
+      end, lang)
+      if ok then ok, err = core.deleteFile(pad(math.floor(num(e.id))), "hub: delete " .. pad(math.floor(num(e.id))), lang) end
+      busy = false
+      if not u.alive() then return end
+      u.loading(false)
+      if ok then
+        u.toast(T("deleted"), C.ok, 4)
+        showList()
+        loadList()
+      else
+        u.toast(T("fail") .. tostring(err), C.danger, 8)
+      end
+    end)
+  end)
+
+  cancelBtn.MouseButton1Click:Connect(function() if not busy then showList() end end)
+
+  u.backBtn.MouseButton1Click:Connect(function()
+    if busy then return end
+    if editing then showList() return end
+    local back = ctx.onBack
+    u.close()
+    if type(back) == "function" then back() end
+  end)
+
+  loadList()
+end
+
+return M
