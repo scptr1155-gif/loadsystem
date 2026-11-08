@@ -1,9 +1,16 @@
--- hubcore | ORTAK KÜTÜPHANE (v1.1)  -> loadsystem deposuna "hubcore" adıyla yükle
+-- hubcore | ORTAK KÜTÜPHANE (v1.2)  -> loadsystem deposuna "hubcore" adıyla yükle
 -- =========================================================
 -- scripthub, create a code, studio, profile, script-menu ve search-profile bu dosyayı kullanır.
 -- İçerik: base64, json, HTTP, api-key okuma, index güncelleme (çakışmaya dayanıklı),
 -- dosya yaz/sil, günlük limit, istatistikler ve ortak pencere (ui) üreticisi.
 -- ui: GERİ / X (küçült -> "CR" logosu) sistemi burada, tüm ekranlar aynısını kullanır.
+--
+-- v1.2 yenilikleri:
+--  * Genel JSON araçları: readJson / mutateJson / textHeight.
+--  * YORUMLAR: readComments / addComment / deleteComment   (roblox-game-star/comments/<ID>.json)
+--  * ARKADAŞLIK: readFriends / friendState / friendList / friendRequest / friendAccept / friendRemove
+--    (roblox-game-star/friends.json)
+--  * CR CHAT: chatFile / GLOBAL_CHAT / readChat / sendChat   (roblox-game-star/chat/*.json)
 --
 -- v1.1 yenilikleri:
 --  * Sahiplik artık TAKMA ADA göre (entry.ownerNick; eski kayıtlarda entry.author). Studio, günlük limit
@@ -13,7 +20,7 @@
 --  * Script Hub logosu: LOGO_ID (decal) + M.logo(); core.ui(..., { logo = true }) başlığa logo koyar.
 --  * Ortak JSON güncelleyici (mutateJson): index ve profiles aynı çakışma korumasını kullanır.
 
-local VERSION = "1.1"
+local VERSION = "1.2"
 local G = (type(getgenv) == "function" and getgenv()) or _G
 local S = G.__LOADSYS or {}
 G.__LOADSYS = S
@@ -824,6 +831,279 @@ function M.deleteFile(name, msg, lang)
     end
     return false, M.E(lang, "conflict")
   end)
+end
+
+--------------------------------------------------------------
+-- v1.2: Genel JSON araçları, yorumlar, arkadaşlık, sohbet
+-- NOT: Bu dosyalar herkese açık depoda durur; yorumlar ve sohbetler herkes tarafından
+-- okunabilir. Gönderen adı istemciden gelir, API anahtarını bilen biri sahte mesaj yazabilir.
+--------------------------------------------------------------
+local TextService = getService("TextService")
+
+-- Herkese açık JSON dosyası (roblox-game-star deposu). Yoksa/bozuksa/okunamazsa nil.
+function M.readJson(path)
+  local src = M.httpGet(STORE .. path)
+  if not src then return nil end
+  local d = jsonDecode(src)
+  if type(d) == "table" then return d end
+  return nil
+end
+
+-- spec: { file, msg, empty = function() -> tablo, check = function(tablo) -> tablo | nil }
+-- fn(veri, h) -> true, sonuc | false, mesaj
+function M.mutateJson(spec, fn, lang) return mutateJson(spec, fn, lang) end
+
+-- Metnin verilen genişlikte kaç piksel yükseklik ve genişlik kaplayacağı (yükseklik, genişlik)
+function M.textHeight(text, size, font, width)
+  text = tostring(text or "")
+  local ok, v = pcall(function()
+    return TextService:GetTextSize(text, size, font, Vector2.new(width, 10000))
+  end)
+  if ok and v then return v.Y, v.X end
+  local perLine = math.max(1, math.floor(width / (size * 0.55)))
+  local lines = math.max(1, math.ceil(#text / perLine))
+  return lines * (size + 2), math.min(width, #text * size * 0.55)
+end
+
+local function listSpec(file, msg, field)
+  return {
+    file = file, msg = msg,
+    empty = function() local t = {} t[field] = {} return t end,
+    check = function(p)
+      if type(p) ~= "table" then return nil end
+      if p[field] == nil then p[field] = {} end
+      if type(p[field]) ~= "table" then return nil end
+      return p
+    end,
+  }
+end
+
+local function denied(lang)
+  return (lang == "en") and "You are not allowed to do this." or "Bunu yapma iznin yok."
+end
+
+-- ---------- YORUMLAR ----------
+local COMMENT_KEEP = 150
+function M.commentFile(id) return "comments/" .. M.pad(math.floor(M.num(id))) .. ".json" end
+
+-- Yorumlar, eskiden yeniye sıralı. Okunamazsa boş liste.
+function M.readComments(id)
+  local d = M.readJson(M.commentFile(id))
+  local out = {}
+  if d and type(d.comments) == "table" then
+    for _, c in ipairs(d.comments) do
+      if type(c) == "table" then out[#out + 1] = c end
+    end
+  end
+  table.sort(out, function(a, b) return M.num(a.id) < M.num(b.id) end)
+  return out
+end
+
+-- Dönüş: true, yeniYorum | false, hata
+function M.addComment(id, nick, text, lang)
+  local spec = listSpec(M.commentFile(id), "hub: comment " .. M.pad(math.floor(M.num(id))), "comments")
+  return mutateJson(spec, function(db)
+    local last = 0
+    for _, c in ipairs(db.comments) do
+      if M.num(c.id) > last then last = M.num(c.id) end
+    end
+    local c = { id = last + 1, n = tostring(nick), k = M.nickKey(nick), m = text, t = os.time() }
+    db.comments[#db.comments + 1] = c
+    while #db.comments > COMMENT_KEEP do table.remove(db.comments, 1) end
+    return true, c
+  end, lang)
+end
+
+-- Yorumu yazan veya script sahibi (ownerKey) silebilir.
+function M.deleteComment(id, cid, nick, ownerKey, lang)
+  local spec = listSpec(M.commentFile(id), "hub: comment delete " .. M.pad(math.floor(M.num(id))), "comments")
+  return mutateJson(spec, function(db)
+    local me = M.nickKey(nick)
+    for i, c in ipairs(db.comments) do
+      if M.num(c.id) == M.num(cid) then
+        if tostring(c.k) ~= me and me ~= tostring(ownerKey or "") then return false, denied(lang) end
+        table.remove(db.comments, i)
+        return true, "ok"
+      end
+    end
+    return true, "ok"
+  end, lang)
+end
+
+-- ---------- ARKADAŞLIK ----------
+-- friends.json: { links = { [anahtar] = { [digerAnahtar] = { s = "p"|"f", from = anahtar, t = zaman } } },
+--                 names = { [anahtar] = gorunenTakmaAd } }
+local FRIENDS_FILE = "friends.json"
+local function friendsSpec()
+  return {
+    file = FRIENDS_FILE, msg = "hub: friends",
+    empty = function() return { links = {}, names = {} } end,
+    check = function(p)
+      if type(p) ~= "table" then return nil end
+      if type(p.links) ~= "table" then p.links = {} end
+      if type(p.names) ~= "table" then p.names = {} end
+      return p
+    end,
+  }
+end
+
+function M.readFriends()
+  local d = M.readJson(FRIENDS_FILE)
+  if type(d) ~= "table" then d = {} end
+  if type(d.links) ~= "table" then d.links = {} end
+  if type(d.names) ~= "table" then d.names = {} end
+  return d
+end
+
+-- "none" | "friend" | "sent" (ben gönderdim) | "received" (bana gönderdi)
+function M.friendState(db, me, other)
+  local a, b = M.nickKey(me), M.nickKey(other)
+  local l = db and db.links and db.links[a]
+  local e = type(l) == "table" and l[b] or nil
+  if type(e) ~= "table" then return "none" end
+  if e.s == "f" then return "friend" end
+  if e.from == a then return "sent" end
+  return "received"
+end
+
+-- { friends = {{key,nick,t}}, incoming = {...}, outgoing = {...} } (takma ada göre sıralı)
+function M.friendList(db, me)
+  local a = M.nickKey(me)
+  local out = { friends = {}, incoming = {}, outgoing = {} }
+  local l = db and db.links and db.links[a]
+  if type(l) == "table" then
+    for bk, e in pairs(l) do
+      if type(e) == "table" then
+        local item = { key = bk, nick = tostring((db.names and db.names[bk]) or bk), t = M.num(e.t) }
+        if e.s == "f" then out.friends[#out.friends + 1] = item
+        elseif e.from == a then out.outgoing[#out.outgoing + 1] = item
+        else out.incoming[#out.incoming + 1] = item end
+      end
+    end
+  end
+  local function byNick(x, y) return string.lower(x.nick) < string.lower(y.nick) end
+  table.sort(out.friends, byNick)
+  table.sort(out.incoming, byNick)
+  table.sort(out.outgoing, byNick)
+  return out
+end
+
+local function setLink(db, a, b, v)
+  if type(db.links[a]) ~= "table" then db.links[a] = {} end
+  if type(db.links[b]) ~= "table" then db.links[b] = {} end
+  db.links[a][b] = v
+  db.links[b][a] = { s = v.s, from = v.from, t = v.t }
+end
+
+local function dropLink(db, a, b)
+  if type(db.links[a]) == "table" then db.links[a][b] = nil end
+  if type(db.links[b]) == "table" then db.links[b][a] = nil end
+end
+
+local function badPlayer(lang) return (lang == "en") and "Invalid player." or "Geçersiz oyuncu." end
+
+-- Dönüş: true, "friend" | "sent"
+function M.friendRequest(me, other, lang)
+  local a, b = M.nickKey(me), M.nickKey(other)
+  if a == "" or b == "" or a == b then return false, badPlayer(lang) end
+  return mutateJson(friendsSpec(), function(db)
+    db.names[a] = tostring(me)
+    if db.names[b] == nil then db.names[b] = tostring(other) end
+    local cur = type(db.links[a]) == "table" and db.links[a][b] or nil
+    if type(cur) == "table" then
+      if cur.s == "f" then return true, "friend" end
+      if cur.from == b then
+        setLink(db, a, b, { s = "f", from = b, t = os.time() })
+        return true, "friend"
+      end
+      return true, "sent"
+    end
+    setLink(db, a, b, { s = "p", from = a, t = os.time() })
+    return true, "sent"
+  end, lang)
+end
+
+-- Bana gelen isteği kabul et. Dönüş: true, "friend"
+function M.friendAccept(me, other, lang)
+  local a, b = M.nickKey(me), M.nickKey(other)
+  if a == "" or b == "" or a == b then return false, badPlayer(lang) end
+  return mutateJson(friendsSpec(), function(db)
+    db.names[a] = tostring(me)
+    local cur = type(db.links[a]) == "table" and db.links[a][b] or nil
+    if type(cur) ~= "table" then return false, badPlayer(lang) end
+    if cur.s == "f" then return true, "friend" end
+    if cur.from ~= b then return false, denied(lang) end
+    setLink(db, a, b, { s = "f", from = b, t = os.time() })
+    return true, "friend"
+  end, lang)
+end
+
+-- Reddet / isteği iptal et / arkadaşlıktan çık (üçü de aynı işlem)
+function M.friendRemove(me, other, lang)
+  local a, b = M.nickKey(me), M.nickKey(other)
+  if a == "" or b == "" or a == b then return false, badPlayer(lang) end
+  return mutateJson(friendsSpec(), function(db)
+    dropLink(db, a, b)
+    return true, "none"
+  end, lang)
+end
+
+-- ---------- CR CHAT ----------
+M.GLOBAL_CHAT = "chat/global.json"
+
+local function encKey(k)
+  return (tostring(k):gsub("[^%w]", function(c) return string.format("_%02x", c:byte()) end))
+end
+
+-- İki takma ad arasındaki özel sohbet dosyası (sıralama fark etmez)
+function M.chatFile(a, b)
+  local x, y = M.nickKey(a), M.nickKey(b)
+  if x > y then x, y = y, x end
+  return "chat/dm_" .. encKey(x) .. "~" .. encKey(y) .. ".json"
+end
+
+local function chatSpec(file)
+  return {
+    file = file, msg = "hub: chat",
+    empty = function() return { msgs = {}, next = 1 } end,
+    check = function(p)
+      if type(p) ~= "table" then return nil end
+      if p.msgs == nil then p.msgs = {} end
+      if type(p.msgs) ~= "table" then return nil end
+      p.next = math.max(1, math.floor(M.num(p.next)))
+      return p
+    end,
+  }
+end
+
+-- Mesajlar, eskiden yeniye sıralı ({i, f = gonderenAnahtar, n = gonderenAd, m = metin, t = zaman}).
+-- Okunamazsa boş liste.
+function M.readChat(file)
+  local d = M.readJson(file)
+  local out = {}
+  if d and type(d.msgs) == "table" then
+    for _, m in ipairs(d.msgs) do
+      if type(m) == "table" then out[#out + 1] = m end
+    end
+  end
+  table.sort(out, function(a, b) return M.num(a.i) < M.num(b.i) end)
+  return out
+end
+
+-- Dönüş: true, mesaj | false, hata. keep: dosyada tutulacak son mesaj sayısı.
+function M.sendChat(file, nick, text, lang, keep)
+  keep = keep or 150
+  return mutateJson(chatSpec(file), function(db)
+    local i = math.max(1, math.floor(M.num(db.next)))
+    for _, m in ipairs(db.msgs) do
+      if M.num(m.i) >= i then i = math.floor(M.num(m.i)) + 1 end
+    end
+    local m = { i = i, f = M.nickKey(nick), n = tostring(nick), m = text, t = os.time() }
+    db.msgs[#db.msgs + 1] = m
+    db.next = i + 1
+    while #db.msgs > keep do table.remove(db.msgs, 1) end
+    return true, m
+  end, lang)
 end
 
 --------------------------------------------------------------
