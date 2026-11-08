@@ -1,14 +1,11 @@
--- scripthub | SCRIPT HUB — AYRI BÖLÜM (v2.0)
+-- scripthub | SCRIPT HUB — AYRI BÖLÜM (v3.0)
 -- =========================================================
 -- main-menu bu dosyayı indirir, ana menüyü kapatır ve open(ctx) çağırır.
--- Hub kendi ekranında açılır. GERİ tuşu ana menüyü yeniden yükler.
---
--- Veri deposu: scptr1155-gif/roblox-game-star  (herkese açık olmalı)
---   hub-index.json -> {"next":2,"scripts":[{id,name,author,desc,image,rating,uses,created}]}
---   000000001, 000000002 ... 999999999 -> her scriptin kodu (9 haneli ID, uzantısız dosya)
---   (main-file dosyasına dokunulmaz.)
---
--- Bu dosya sadece OKUR (API anahtarı gerekmez). Yayınlama `create a code` dosyasındadır.
+-- v3.0:
+-- * Kartlarda ÇALIŞTIR yerine AÇ: loading -> roblox-game-star/script-menu çalışır ->
+--   menü açılır (çalıştır, iyi/kötü oy).
+-- * Üst çubukta CREATE, STUDİO ve PROFİL. Hepsi aynı hubcore kütüphanesini kullanır.
+-- * X ile küçültme (CR logosu) tüm ekranlarda aynı.
 --
 -- ctx: { lang="tr"|"en", accent=Color3, bg=bool, anim=bool, nick, player, menuUrl }
 
@@ -16,328 +13,155 @@ local G = (type(getgenv) == "function" and getgenv()) or _G
 local S = G.__LOADSYS or {}
 G.__LOADSYS = S
 
-local BASE  = "https://raw.githubusercontent.com/scptr1155-gif/loadsystem/refs/heads/main/"
-local STORE = "https://raw.githubusercontent.com/scptr1155-gif/roblox-game-star/refs/heads/main/"
-local INDEX_FILE = "hub-index.json"
-local CREATE_URL = BASE .. "create%20a%20code"
+local BASE = "https://raw.githubusercontent.com/scptr1155-gif/loadsystem/refs/heads/main/"
 local MAX_ID = 999999999
+local MODULES = {
+  create  = BASE .. "create%20a%20code",
+  studio  = BASE .. "studio",
+  profile = BASE .. "profile",
+}
 
-local function getService(n)
-  local ok, s = pcall(function() return game:GetService(n) end)
-  if ok and s then return s end
+local function loadCore()
+  if type(S.CORE) == "table" then return S.CORE end
+  local ok, src = pcall(function() return game:HttpGet(BASE .. "hubcore?t=" .. tostring(os.time())) end)
+  if not ok or type(src) ~= "string" or type(loadstring) ~= "function" then return nil end
+  local fn = loadstring(src)
+  if not fn then return nil end
+  local okR, c = pcall(fn)
+  if okR and type(c) == "table" then return c end
   return nil
 end
-local Players, TweenService, CoreGui = getService("Players"), getService("TweenService"), getService("CoreGui")
-local HttpService, Workspace = getService("HttpService"), getService("Workspace")
 
-local function sleep(s)
-  if type(task) == "table" and type(task.wait) == "function" then task.wait(s or 0)
-  elseif type(wait) == "function" then wait(s or 0) end
-end
-local function spawn(fn, ...)
-  if type(task) == "table" and type(task.spawn) == "function" then return task.spawn(fn, ...) end
-  local co = coroutine.create(fn)
-  coroutine.resume(co, ...)
-  return co
-end
-local function delay(t, fn)
-  if type(task) == "table" and type(task.delay) == "function" then return task.delay(t, fn) end
-  spawn(function() sleep(t) fn() end)
-end
-local function safe(fn, ...)
-  local ok, a = pcall(fn, ...)
-  return ok, a
-end
-
---------------------------------------------------------------
--- Diller
---------------------------------------------------------------
 local STR = {
   tr = {
-    back = "← GERİ", title = "Script Hub", create = "CREATE",
+    back = "← GERİ", title = "Script Hub", create = "CREATE", studio = "STUDİO", profile = "PROFİL",
     t_new = "EN YENİ", t_top = "EN YÜKSEK PUAN", t_pop = "POPÜLER",
-    id_ph = "ID (1-999999999)", go = "GİT", run = "ÇALIŞTIR",
+    id_ph = "ID (1-999999999)", go = "GİT", open = "AÇ",
     empty = "Henüz script yok.", none_found = "Bu ID ile script bulunamadı.",
     loading = "Yükleniyor...", by = "yazar", bad_id = "Geçerli bir ID gir (1-999999999).",
-    run_ok = "Script çalıştırıldı.", run_fail = "Çalıştırılamadı: ",
-    ld_create = "OLUŞTURMA ARAÇLARI YÜKLENİYOR", ld_sub = "LÜTFEN BEKLE",
+    ld_open = "YÜKLENİYOR", ld_create = "OLUŞTURMA ARAÇLARI YÜKLENİYOR",
+    ld_studio = "STUDİO YÜKLENİYOR", ld_profile = "PROFİL YÜKLENİYOR", ld_sub = "LÜTFEN BEKLE",
     not_ready = "Sistem daha kurulmadı.", menu_fail = "Ana menü indirilemedi. Bağlantını kontrol et.",
-    nodesc = "Açıklama yok",
+    menu_open_fail = "Menü açılamadı: ", nodesc = "Açıklama yok",
   },
   en = {
-    back = "← BACK", title = "Script Hub", create = "CREATE",
+    back = "← BACK", title = "Script Hub", create = "CREATE", studio = "STUDIO", profile = "PROFILE",
     t_new = "NEWEST", t_top = "TOP RATED", t_pop = "POPULAR",
-    id_ph = "ID (1-999999999)", go = "GO", run = "RUN",
+    id_ph = "ID (1-999999999)", go = "GO", open = "OPEN",
     empty = "No scripts yet.", none_found = "No script found with that ID.",
     loading = "Loading...", by = "by", bad_id = "Enter a valid ID (1-999999999).",
-    run_ok = "Script executed.", run_fail = "Could not run: ",
-    ld_create = "LOADING CREATE TOOLS", ld_sub = "PLEASE WAIT",
+    ld_open = "LOADING", ld_create = "LOADING CREATE TOOLS",
+    ld_studio = "LOADING STUDIO", ld_profile = "LOADING PROFILE", ld_sub = "PLEASE WAIT",
     not_ready = "The system is not set up yet.", menu_fail = "Could not download the main menu. Check your connection.",
-    nodesc = "No description",
+    menu_open_fail = "Could not open menu: ", nodesc = "No description",
   },
 }
-
---------------------------------------------------------------
--- Veri katmanı (okuma)
---------------------------------------------------------------
-local function pad(id) return string.format("%09d", id) end
-
-local function httpGet(url)
-  local sep = url:find("?", 1, true) and "&" or "?"
-  local ok, r = pcall(function() return game:HttpGet(url .. sep .. "t=" .. tostring(os.time())) end)
-  if ok and type(r) == "string" and #r > 0 and r:sub(1, 14) ~= "404: Not Found" then return r end
-  return nil
-end
-
-local function readIndex()
-  local src = httpGet(STORE .. INDEX_FILE)
-  if not src then return { next = 1, scripts = {} } end
-  local ok, d = pcall(function() return HttpService:JSONDecode(src) end)
-  if ok and type(d) == "table" and type(d.scripts) == "table" then return d end
-  return { next = 1, scripts = {} }
-end
-
-local function num(v) return tonumber(v) or 0 end
-
-local function listScripts(sort)
-  local items = {}
-  for _, e in ipairs(readIndex().scripts) do items[#items + 1] = e end
-  if sort == "top" then
-    table.sort(items, function(a, b)
-      if num(a.rating) ~= num(b.rating) then return num(a.rating) > num(b.rating) end
-      return num(a.id) > num(b.id)
-    end)
-  elseif sort == "popular" then
-    table.sort(items, function(a, b)
-      if num(a.uses) ~= num(b.uses) then return num(a.uses) > num(b.uses) end
-      return num(a.id) > num(b.id)
-    end)
-  else
-    table.sort(items, function(a, b) return num(a.id) > num(b.id) end)
-  end
-  return items
-end
-
-local function findScript(id)
-  for _, e in ipairs(readIndex().scripts) do
-    if num(e.id) == id then return e end
-  end
-  return nil
-end
-
-local function runScript(id)
-  local code = httpGet(STORE .. pad(id))
-  if not code then error("kod indirilemedi") end
-  local fn, err = loadstring(code)
-  if not fn then error(err) end
-  fn()
-end
-
--- Uzak dosyayı indir + çalıştır (boş/hata = başarısız)
-local function fetchLoad(url)
-  local src = httpGet(url)
-  if not src then return false, "indirilemedi" end
-  if #((src:gsub("%s+", ""))) == 0 then return false, "bos dosya" end
-  if type(loadstring) ~= "function" then return false, "loadstring yok" end
-  local fn, cerr = loadstring(src)
-  if not fn then
-    local ln = tonumber(tostring(cerr):match(":(%d+):"))
-    local n, txt = 0, ""
-    for line in (src .. "\n"):gmatch("(.-)\n") do
-      n = n + 1
-      if n == ln then txt = line break end
-    end
-    print("[loadsystem] derleme hatasi " .. tostring(cerr) .. " | satir: " .. txt:sub(1, 120))
-    return false, "L" .. tostring(ln) .. ": " .. txt:sub(1, 50)
-  end
-  local okR, mod = pcall(fn)
-  if not okR then return false, tostring(mod) end
-  return true, mod
-end
-
---------------------------------------------------------------
--- Arayüz
---------------------------------------------------------------
-local C = {
-  bg = Color3.fromRGB(9, 10, 14), bgTop = Color3.fromRGB(19, 21, 31),
-  panel = Color3.fromRGB(13, 15, 20), card = Color3.fromRGB(22, 25, 33),
-  cardHi = Color3.fromRGB(31, 35, 46), line = Color3.fromRGB(38, 42, 53),
-  text = Color3.fromRGB(240, 242, 247), muted = Color3.fromRGB(144, 149, 165),
-  faint = Color3.fromRGB(98, 103, 120), ok = Color3.fromRGB(34, 197, 94),
-  danger = Color3.fromRGB(239, 68, 68), white = Color3.fromRGB(255, 255, 255),
-}
-local FNT = { reg = Enum.Font.Gotham, med = Enum.Font.GothamMedium, bold = Enum.Font.GothamBold }
-local AL, AC = Enum.TextXAlignment.Left, Enum.TextXAlignment.Center
-
-local function new(class, props, parent)
-  local ok, o = pcall(function() return Instance.new(class) end)
-  if not ok or not o then return nil end
-  if props then for k, v in pairs(props) do safe(function() o[k] = v end) end end
-  if parent then safe(function() o.Parent = parent end) end
-  return o
-end
-local function round(o, r) if o then new("UICorner", { CornerRadius = UDim.new(0, r or 12) }, o) end end
-local function stroke(o, col) if o then new("UIStroke", { ApplyStrokeMode = Enum.ApplyStrokeMode.Border, Color = col, Thickness = 1 }, o) end end
 
 local M = {}
 
 function M.open(ctx)
   ctx = ctx or {}
+  local core = loadCore()
+  if not core then
+    print("[scripthub] hubcore yuklenemedi, ana menuye donuluyor")
+    pcall(function()
+      S.MAIN_READY = nil
+      loadstring(game:HttpGet((ctx.menuUrl or (BASE .. "main-menu")) .. "?t=" .. tostring(os.time())))()
+    end)
+    return
+  end
+
   local lang = (ctx.lang == "en") and "en" or "tr"
   local function T(k) return STR[lang][k] or STR.tr[k] or k end
-  local accent = ctx.accent or Color3.fromRGB(88, 101, 242)
-  local accentHi = accent:Lerp(Color3.new(1, 1, 1), 0.18)
-  local animOn = ctx.anim ~= false
+  local num, pad, spawn, sleep = core.num, core.pad, core.spawn, core.sleep
 
-  -- önceki hub açıksa kapat
-  safe(function() if S.HUB_GUI then S.HUB_GUI:Destroy() end end)
+  local u = core.ui(ctx, { name = "Hub", title = T("title"), back = true, backText = T("back") })
+  if not u then return end
+  local C, FNT = u.C, u.FNT
+  local W, PAD, IW = u.W, u.PAD, u.IW
+  local toast = u.toast
+  local window = u.window
+  local AC = Enum.TextXAlignment.Center
 
-  local gui = new("ScreenGui", {
-    Name = "LoadSystemHub", ResetOnSpawn = false, IgnoreGuiInset = true, DisplayOrder = 800,
-    ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
-  })
-  if not gui then return end
-  local attached = false
-  if CoreGui then attached = pcall(function() gui.Parent = CoreGui end) and gui.Parent == CoreGui end
-  if not attached then
-    pcall(function() gui.Parent = Players.LocalPlayer:WaitForChild("PlayerGui") end)
-  end
-  S.HUB_GUI = gui
+  -- Üst çubuk: CREATE / STUDİO / PROFİL
+  local profileBtn = u.pill(T("profile"), W - PAD - 34 - 10 - 100, 24, 100, 38, false)
+  local studioBtn  = u.pill(T("studio"), W - PAD - 34 - 10 - 100 - 8 - 100, 24, 100, 38, false)
+  local createBtn  = u.pill(T("create"), W - PAD - 34 - 10 - 100 - 8 - 100 - 8 - 110, 24, 110, 38, true)
 
-  local alive, closing = true, false
-  local function tw(obj, goal, t)
-    if not obj then return end
-    if animOn and TweenService then
-      local ok = pcall(function()
-        TweenService:Create(obj, TweenInfo.new(t or 0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), goal):Play()
-      end)
-      if ok then return end
-    end
-    for k, v in pairs(goal) do safe(function() obj[k] = v end) end
-  end
-  local function label(parent, text, x, y, w, h, size, font, color, align, extra)
-    local p = {
-      Size = UDim2.fromOffset(w, h), Position = UDim2.fromOffset(x, y), BackgroundTransparency = 1,
-      Text = text, TextColor3 = color, TextSize = size, Font = font, TextXAlignment = align or AL, ZIndex = 4,
-    }
-    if extra then for k, v in pairs(extra) do p[k] = v end end
-    return new("TextLabel", p, parent)
-  end
-
-  -- arka plan: şeffaf = oyun ekranı
-  local bg = new("Frame", {
-    Size = UDim2.fromScale(1, 1), BackgroundColor3 = C.bg, BackgroundTransparency = (ctx.bg == false) and 0 or 1,
-    BorderSizePixel = 0, ZIndex = 0,
-  }, gui)
-  new("UIGradient", { Color = ColorSequence.new(C.bgTop, C.bg), Rotation = 150 }, bg)
-
-  local WIN_W, WIN_H, PAD = 880, 520, 28
-  local IW = WIN_W - PAD * 2
-  local window = new("Frame", {
-    Size = UDim2.fromOffset(WIN_W, WIN_H), AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5),
-    BackgroundColor3 = C.panel, BorderSizePixel = 0, ZIndex = 2,
-  }, bg)
-  round(window, 18)
-  stroke(window, C.line)
-  local uiScale = new("UIScale", { Scale = 1 }, window)
-  local function fit()
-    local vp = Vector2.new(1280, 720)
-    safe(function() local cam = Workspace.CurrentCamera if cam then vp = cam.ViewportSize end end)
-    local s = math.min((vp.X - 24) / WIN_W, (vp.Y - 24) / WIN_H, 1)
-    if s <= 0 then s = 1 end
-    safe(function() uiScale.Scale = math.max(0.35, s) end)
-  end
-  fit()
-  local camConn
-  safe(function()
-    camConn = Workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(fit)
-  end)
-
-  local function close()
-    alive = false
-    safe(function() if camConn then camConn:Disconnect() end end)
-    safe(function() gui:Destroy() end)
-    if S.HUB_GUI == gui then S.HUB_GUI = nil end
-  end
-
-  -- Bildirim
-  local toastF = new("Frame", {
-    Size = UDim2.fromOffset(640, 42), AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, 70),
-    BackgroundColor3 = C.cardHi, BorderSizePixel = 0, Visible = false, ZIndex = 60,
-  }, window)
-  round(toastF, 21)
-  stroke(toastF, C.line)
-  local toastDot = new("Frame", {
-    Size = UDim2.fromOffset(8, 8), Position = UDim2.fromOffset(18, 17), BackgroundColor3 = C.muted, BorderSizePixel = 0, ZIndex = 61,
-  }, toastF)
-  round(toastDot, 4)
-  local toastT = label(toastF, "", 36, 0, 592, 42, 12, FNT.med, C.text, AL, { ZIndex = 61, TextTruncate = Enum.TextTruncate.AtEnd })
-  local toastTok = 0
-  local function toast(text, color)
-    toastTok = toastTok + 1
-    local my = toastTok
-    safe(function()
-      toastT.Text = tostring(text or "")
-      toastDot.BackgroundColor3 = color or C.muted
-      toastF.Visible = true
-    end)
-    tw(toastF, { Position = UDim2.new(0.5, 0, 1, -18) }, 0.3)
-    delay(3.5, function()
-      if my ~= toastTok or not alive then return end
-      tw(toastF, { Position = UDim2.new(0.5, 0, 1, 70) }, 0.3)
-    end)
-  end
-
-  -- Header: GERİ / başlık / CREATE
-  local function pill(text, x, y, w, h, filled)
-    local b = new("TextButton", {
-      Size = UDim2.fromOffset(w, h), Position = UDim2.fromOffset(x, y),
-      BackgroundColor3 = filled and accent or C.card, BorderSizePixel = 0, Text = text,
-      TextColor3 = filled and C.white or C.text, TextSize = 12, Font = FNT.bold, AutoButtonColor = false, ZIndex = 4,
-    }, window)
-    round(b, 10)
-    if not filled then stroke(b, C.line) end
-    b.MouseEnter:Connect(function() tw(b, { BackgroundColor3 = filled and accentHi or C.cardHi }, 0.12) end)
-    b.MouseLeave:Connect(function() tw(b, { BackgroundColor3 = filled and accent or C.card }, 0.12) end)
-    return b
-  end
-  local backBtn = pill(T("back"), PAD, 24, 110, 38, false)
-  label(window, T("title"), PAD + 126, 22, 300, 42, 24, FNT.bold, C.text)
-  local xBtn = pill("X", WIN_W - PAD - 34, 24, 34, 38, false)
-  local createBtn = pill(T("create"), WIN_W - PAD - 34 - 10 - 130, 24, 130, 38, true)
-
-  -- Sekmeler + ID arama
+  --------------------------------------------------------------
+  -- Liste
+  --------------------------------------------------------------
   local sort = "new"
   local TABS = { { "new", "t_new" }, { "top", "t_top" }, { "popular", "t_pop" } }
   local tabBtns = {}
   local function refreshTabs()
     for i, b in ipairs(tabBtns) do
       local on = (TABS[i][1] == sort)
-      tw(b, { BackgroundColor3 = on and accent or C.card, TextColor3 = on and C.white or C.muted }, 0.2)
+      u.tw(b, { BackgroundColor3 = on and u.accent or C.card, TextColor3 = on and C.white or C.muted }, 0.2)
     end
   end
 
-  local scroll = new("ScrollingFrame", {
-    Size = UDim2.fromOffset(IW, 364), Position = UDim2.fromOffset(PAD, 128), BackgroundTransparency = 1, BorderSizePixel = 0,
-    ScrollBarThickness = 3, CanvasSize = UDim2.fromOffset(0, 0), AutomaticCanvasSize = Enum.AutomaticSize.Y, ZIndex = 3,
-  }, window)
-  new("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder }, scroll)
+  local scroll = u.scroll(PAD, 128, IW, 364)
 
   local function clearList()
     for _, c in ipairs(scroll:GetChildren()) do
-      if c.Name == "Card" or c.Name == "Msg" then safe(function() c:Destroy() end) end
+      if c.Name == "Card" or c.Name == "Msg" then core.safe(function() c:Destroy() end) end
     end
   end
   local function showMsg(text)
     clearList()
-    label(scroll, text, 0, 0, IW, 80, 13, FNT.med, C.faint, AC, { Name = "Msg", TextWrapped = true })
+    u.label(scroll, text, 0, 0, IW, 80, 13, FNT.med, C.faint, { Name = "Msg", TextWrapped = true, TextXAlignment = AC })
   end
 
-  local function runEntry(e)
+  local function listScripts(s)
+    local items = {}
+    for _, e in ipairs(core.readIndex().scripts) do items[#items + 1] = e end
+    local function net(e) return num(e.good) - num(e.bad) end
+    if s == "top" then
+      table.sort(items, function(a, b)
+        if net(a) ~= net(b) then return net(a) > net(b) end
+        return num(a.id) > num(b.id)
+      end)
+    elseif s == "popular" then
+      table.sort(items, function(a, b)
+        if num(a.uses) ~= num(b.uses) then return num(a.uses) > num(b.uses) end
+        return num(a.id) > num(b.id)
+      end)
+    else
+      table.sort(items, function(a, b) return num(a.id) > num(b.id) end)
+    end
+    return items
+  end
+
+  local busy = false
+
+  -- AÇ: loading -> roblox-game-star/script-menu -> menü
+  local function refresh() end
+  local function openEntry(e)
+    if busy or u.locked then return end
+    busy = true
+    u.loading(true, T("ld_open"), T("ld_sub"))
     spawn(function()
-      local ok, err = pcall(runScript, math.floor(num(e.id)))
-      if not alive then return end
-      if ok then toast(T("run_ok"), C.ok) else toast(T("run_fail") .. tostring(err), C.danger) end
+      local t0 = os.clock()
+      local ok, mod = core.fetchLoad(core.STORE .. "script-menu")
+      if ok and not (type(mod) == "table" and type(mod.open) == "function") then
+        ok, mod = false, "script-menu open() yok"
+      end
+      local rest = 0.8 - (os.clock() - t0)
+      if rest > 0 then sleep(rest) end
+      busy = false
+      if not u.alive() then return end
+      u.loading(false)
+      if ok then
+        local ctx3 = {}
+        for k, v in pairs(ctx) do ctx3[k] = v end
+        ctx3.onClose = function() if u.alive() then refresh() end end
+        local okO, errO = pcall(mod.open, ctx3, e)
+        if not okO then toast(T("menu_open_fail") .. tostring(errO):sub(1, 80), C.danger) end
+      else
+        print("[scripthub] script-menu basarisiz: " .. tostring(mod))
+        toast(T("not_ready") .. " [" .. tostring(mod):sub(1, 80) .. "]", C.danger)
+      end
     end)
   end
 
@@ -346,55 +170,47 @@ function M.open(ctx)
     if #list == 0 then showMsg(T("empty")) return end
     for i, e in ipairs(list) do
       if i > 100 then break end
-      local card = new("Frame", {
+      local card = u.new("Frame", {
         Name = "Card", Size = UDim2.fromOffset(IW - 8, 72), BackgroundColor3 = C.card, BorderSizePixel = 0,
         LayoutOrder = i, ZIndex = 3,
       }, scroll)
-      round(card, 12)
-      stroke(card, C.line)
-      local thumb = new("ImageLabel", {
+      u.round(card, 12)
+      u.stroke(card, C.line)
+      local thumb = u.new("ImageLabel", {
         Size = UDim2.fromOffset(52, 52), Position = UDim2.fromOffset(10, 10), BackgroundColor3 = C.cardHi,
         BorderSizePixel = 0, ScaleType = Enum.ScaleType.Crop, ZIndex = 4,
       }, card)
-      round(thumb, 10)
+      u.round(thumb, 10)
       local img = tonumber(e.image)
-      if img and img > 0 then safe(function() thumb.Image = "rbxassetid://" .. tostring(math.floor(img)) end) end
-      label(card, tostring(e.name or "?"), 74, 9, IW - 230, 20, 14, FNT.bold, C.text, AL, { TextTruncate = Enum.TextTruncate.AtEnd })
-      local r = tonumber(e.rating)
+      if img and img > 0 then core.safe(function() thumb.Image = "rbxassetid://" .. tostring(math.floor(img)) end) end
+      u.label(card, tostring(e.name or "?"), 74, 9, IW - 230, 20, 14, FNT.bold, C.text, { TextTruncate = Enum.TextTruncate.AtEnd })
       local meta = T("by") .. " " .. tostring(e.author or "?") .. "   ID " .. pad(math.floor(num(e.id)))
-        .. (r and ("   ★ " .. string.format("%.1f", r)) or "")
-      label(card, meta, 74, 30, IW - 230, 16, 11, FNT.med, C.muted, AL, { TextTruncate = Enum.TextTruncate.AtEnd })
+        .. "   👍 " .. tostring(math.floor(num(e.good))) .. "  👎 " .. tostring(math.floor(num(e.bad)))
+        .. "   ▶ " .. tostring(math.floor(num(e.uses)))
+      u.label(card, meta, 74, 30, IW - 230, 16, 11, FNT.med, C.muted, { TextTruncate = Enum.TextTruncate.AtEnd })
       local d = tostring(e.desc or "")
       if d == "" then d = T("nodesc") end
-      label(card, d, 74, 47, IW - 230, 16, 11, FNT.reg, C.faint, AL, { TextTruncate = Enum.TextTruncate.AtEnd })
-      local rb = new("TextButton", {
-        Size = UDim2.fromOffset(100, 34), Position = UDim2.fromOffset(IW - 8 - 112, 19), BackgroundColor3 = accent,
-        BorderSizePixel = 0, Text = T("run"), TextColor3 = C.white, TextSize = 11, Font = FNT.bold, AutoButtonColor = false, ZIndex = 4,
-      }, card)
-      round(rb, 9)
-      rb.MouseButton1Click:Connect(function() runEntry(e) end)
+      u.label(card, d, 74, 47, IW - 230, 16, 11, FNT.reg, C.faint, { TextTruncate = Enum.TextTruncate.AtEnd })
+      local ob = u.pill(T("open"), IW - 8 - 112, 19, 100, 34, true, card)
+      ob.MouseButton1Click:Connect(function() openEntry(e) end)
     end
   end
 
   local reqToken = 0
-  local function refresh()
+  refresh = function()
     reqToken = reqToken + 1
     local my, s = reqToken, sort
     showMsg(T("loading"))
     spawn(function()
       local ok, res = pcall(listScripts, s)
-      if not alive or my ~= reqToken then return end
+      if not u.alive() or my ~= reqToken then return end
       if ok then render(res) else showMsg(T("empty")) end
     end)
   end
 
   for i, t in ipairs(TABS) do
-    local b = new("TextButton", {
-      Size = UDim2.fromOffset(150, 32), Position = UDim2.fromOffset(PAD + (i - 1) * 158, 82), BackgroundColor3 = C.card,
-      BorderSizePixel = 0, Text = T(t[2]), TextColor3 = C.muted, TextSize = 11, Font = FNT.bold, AutoButtonColor = false, ZIndex = 4,
-    }, window)
-    round(b, 9)
-    stroke(b, C.line)
+    local b = u.pill(T(t[2]), PAD + (i - 1) * 158, 82, 150, 32, false)
+    b.TextSize = 11
     tabBtns[i] = b
     b.MouseButton1Click:Connect(function()
       sort = t[1]
@@ -403,157 +219,99 @@ function M.open(ctx)
     end)
   end
 
-  local idF = new("Frame", {
-    Size = UDim2.fromOffset(170, 32), Position = UDim2.fromOffset(WIN_W - PAD - 250, 82), BackgroundColor3 = C.card,
-    BorderSizePixel = 0, ZIndex = 3,
-  }, window)
-  round(idF, 9)
-  stroke(idF, C.line)
-  local idBox = new("TextBox", {
+  local idBox = u.new("TextBox", {
     Size = UDim2.new(1, -20, 1, 0), Position = UDim2.fromOffset(10, 0), BackgroundTransparency = 1, Text = "",
     PlaceholderText = T("id_ph"), PlaceholderColor3 = C.faint, TextColor3 = C.text, TextSize = 12, Font = FNT.med,
-    ClearTextOnFocus = false, TextXAlignment = AL, ZIndex = 4,
-  }, idF)
-  local goBtn = new("TextButton", {
-    Size = UDim2.fromOffset(72, 32), Position = UDim2.fromOffset(WIN_W - PAD - 72, 82), BackgroundColor3 = C.cardHi,
-    BorderSizePixel = 0, Text = T("go"), TextColor3 = C.text, TextSize = 11, Font = FNT.bold, AutoButtonColor = false, ZIndex = 4,
-  }, window)
-  round(goBtn, 9)
+    ClearTextOnFocus = false, TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 4,
+  }, (function()
+    local f = u.new("Frame", {
+      Size = UDim2.fromOffset(170, 32), Position = UDim2.fromOffset(W - PAD - 250, 82), BackgroundColor3 = C.card,
+      BorderSizePixel = 0, ZIndex = 3,
+    }, window)
+    u.round(f, 9)
+    u.stroke(f, C.line)
+    return f
+  end)())
+  local goBtn = u.pill(T("go"), W - PAD - 72, 82, 72, 32, false)
+  goBtn.TextSize = 11
 
   local function searchId()
-    local txt = (idBox.Text or ""):match("^%s*(.-)%s*$")
+    local txt = core.trim(idBox.Text)
     local id = tonumber(txt)
     if not id or id < 1 or id > MAX_ID or id ~= math.floor(id) then toast(T("bad_id"), C.danger) return end
     showMsg(T("loading"))
     spawn(function()
-      local ok, e = pcall(findScript, id)
-      if not alive then return end
-      if ok and e then render({ e }) else showMsg(T("none_found")) end
+      local found
+      for _, e in ipairs(core.readIndex().scripts) do
+        if num(e.id) == id then found = e break end
+      end
+      if not u.alive() then return end
+      if found then render({ found }) else showMsg(T("none_found")) end
     end)
   end
   goBtn.MouseButton1Click:Connect(searchId)
   idBox.FocusLost:Connect(function(enter) if enter then searchId() end end)
 
-  -- Loading ekranı (tam ekran)
-  local loadOv = new("Frame", {
-    Size = UDim2.fromScale(1, 1), BackgroundColor3 = Color3.fromRGB(0, 0, 0), BorderSizePixel = 0,
-    Visible = false, Active = true, ZIndex = 200,
-  }, gui)
-  new("TextLabel", {
-    Size = UDim2.fromOffset(900, 56), Position = UDim2.fromScale(0.5, 0.45), AnchorPoint = Vector2.new(0.5, 0.5),
-    BackgroundTransparency = 1, Text = T("ld_create"), TextColor3 = C.white, TextSize = 32, Font = FNT.bold, ZIndex = 201,
-  }, loadOv)
-  new("TextLabel", {
-    Size = UDim2.fromOffset(900, 24), Position = UDim2.fromScale(0.5, 0.52), AnchorPoint = Vector2.new(0.5, 0.5),
-    BackgroundTransparency = 1, Text = T("ld_sub"), TextColor3 = Color3.fromRGB(150, 152, 158), TextSize = 13,
-    Font = FNT.med, ZIndex = 201,
-  }, loadOv)
-  local barBg = new("Frame", {
-    Size = UDim2.fromOffset(280, 4), Position = UDim2.fromScale(0.5, 0.6), AnchorPoint = Vector2.new(0.5, 0.5),
-    BackgroundColor3 = Color3.fromRGB(40, 42, 48), BorderSizePixel = 0, ZIndex = 201,
-  }, loadOv)
-  local bar = new("Frame", { Size = UDim2.fromOffset(0, 4), BackgroundColor3 = accent, BorderSizePixel = 0, ZIndex = 202 }, barBg)
-  safe(function()
-    TweenService:Create(bar, TweenInfo.new(1.1, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
-      { Size = UDim2.fromOffset(280, 4) }):Play()
-  end)
-
-  -- CREATE: ayrı bölüm. Başarısızsa loading kapanır, hub'da kalınır.
-  local busy = false
-  createBtn.MouseButton1Click:Connect(function()
-    if busy or closing then return end
+  --------------------------------------------------------------
+  -- CREATE / STUDİO / PROFİL (ayrı bölümler)
+  --------------------------------------------------------------
+  local function openModule(key, loadKey)
+    if busy or u.locked then return end
     busy = true
-    safe(function() loadOv.Visible = true end)
+    u.loading(true, T(loadKey), T("ld_sub"))
     spawn(function()
       local t0 = os.clock()
-      local ok, mod = fetchLoad(CREATE_URL)
+      local ok, mod = core.fetchLoad(MODULES[key])
       if ok and not (type(mod) == "table" and type(mod.open) == "function") then
-        ok, mod = false, "create a code open() yok"
+        ok, mod = false, key .. " open() yok"
       end
       local rest = 1.0 - (os.clock() - t0)
       if rest > 0 then sleep(rest) end
       busy = false
-      if not alive then return end
+      if not u.alive() then return end
       if ok then
         local ctx2 = {}
         for k, v in pairs(ctx) do ctx2[k] = v end
         ctx2.onBack = function() M.open(ctx) end
-        close()
+        u.close()
         local okO, errO = pcall(mod.open, ctx2)
         if not okO then
-          print("[scripthub] create acilamadi: " .. tostring(errO))
+          print("[scripthub] " .. key .. " acilamadi: " .. tostring(errO))
           M.open(ctx)
         end
       else
-        print("[scripthub] create basarisiz: " .. tostring(mod))
-        safe(function() loadOv.Visible = false end)
+        print("[scripthub] " .. key .. " basarisiz: " .. tostring(mod))
+        u.loading(false)
         toast(T("not_ready") .. " [" .. tostring(mod):sub(1, 80) .. "]", C.danger)
       end
     end)
-  end)
+  end
+  createBtn.MouseButton1Click:Connect(function() openModule("create", "ld_create") end)
+  studioBtn.MouseButton1Click:Connect(function() openModule("studio", "ld_studio") end)
+  profileBtn.MouseButton1Click:Connect(function() openModule("profile", "ld_profile") end)
 
+  --------------------------------------------------------------
   -- GERİ: ana menüyü yeniden yükle
-  backBtn.MouseButton1Click:Connect(function()
-    if closing or busy then return end
-    closing = true
+  --------------------------------------------------------------
+  u.backBtn.MouseButton1Click:Connect(function()
+    if u.locked or busy then return end
+    u.locked = true
     spawn(function()
-      local src = httpGet(ctx.menuUrl or (BASE .. "main-menu"))
+      local src = core.httpGet(ctx.menuUrl or (BASE .. "main-menu"))
       local fn, err
       if src and type(loadstring) == "function" then fn, err = loadstring(src) end
       if not fn then
-        closing = false
+        u.locked = false
         print("[scripthub] main-menu yuklenemedi: " .. tostring(err))
         toast(T("menu_fail"), C.danger)
         return
       end
-      close()
+      u.close()
       S.MAIN_READY = nil
       local okR, errR = pcall(fn)
       if not okR then print("[scripthub] main-menu hatasi: " .. tostring(errR)) end
     end)
   end)
-
-
-  -- X: küçül -> kareye dön -> "CR" logosu -> kenara git. Logoya basınca geri açılır.
-  local minimized = false
-  local hiddenKids = {}
-  local logoBtn = new("TextButton", {
-    Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Text = "CR", TextColor3 = C.white, TextSize = 22,
-    Font = FNT.bold, AutoButtonColor = false, Visible = false, ZIndex = 100,
-  }, window)
-  local function setMin(on)
-    if on == minimized or closing then return end
-    minimized = on
-    if on then
-      safe(function() window.ClipsDescendants = true end)
-      tw(window, { Size = UDim2.fromOffset(64, 64), BackgroundColor3 = accent }, 0.3)
-      tw(bg, { BackgroundTransparency = 1 }, 0.3)
-      delay(0.34, function()
-        if not minimized or not alive then return end
-        for _, c in ipairs(window:GetChildren()) do
-          if c ~= logoBtn and c:IsA("GuiObject") then hiddenKids[c] = c.Visible; c.Visible = false end
-        end
-        logoBtn.Visible = true
-        tw(window, { Position = UDim2.new(1, -52, 0.5, 0) }, 0.5)
-      end)
-    else
-      logoBtn.Visible = false
-      tw(window, { Position = UDim2.fromScale(0.5, 0.5) }, 0.3)
-      delay(0.32, function()
-        if minimized or not alive then return end
-        tw(window, { Size = UDim2.fromOffset(WIN_W, WIN_H), BackgroundColor3 = C.panel }, 0.3)
-        tw(bg, { BackgroundTransparency = (ctx.bg == false) and 0 or 1 }, 0.3)
-        delay(0.3, function()
-          if minimized or not alive then return end
-          for c, v in pairs(hiddenKids) do safe(function() c.Visible = v end) end
-          hiddenKids = {}
-          safe(function() window.ClipsDescendants = false end)
-        end)
-      end)
-    end
-  end
-  xBtn.MouseButton1Click:Connect(function() setMin(true) end)
-  logoBtn.MouseButton1Click:Connect(function() setMin(false) end)
 
   refreshTabs()
   refresh()
