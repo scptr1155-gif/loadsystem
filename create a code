@@ -1,6 +1,9 @@
--- create a code | SCRIPT OLUŞTUR VE YAYINLA (v3.2)
+-- create a code | SCRIPT OLUŞTUR VE YAYINLA (v3.3)
 -- =========================================================
 -- scripthub'daki CREATE tuşu bu dosyayı indirir ve open(ctx) çağırır.
+-- v3.3: Resim alanı Decal / Texture / Image ID kabul eder (decal otomatik gerçek resme çevrilir). Boş bırakılırsa
+--       varsayılan resim (75305814426740) kullanılır; bu ID alanda gösterilmez, sadece resim görünür. Gereken: hubcore v1.5
+--
 -- v3.2: VIP limitleri (hubcore v1.4): ücretsiz 10 script ve günde 1, VIP (pass 2075710314) 50 script ve günde 3 yayın.
 --
 -- v3.1:
@@ -21,7 +24,7 @@ G.__LOADSYS = S
 
 local BASE = "https://raw.githubusercontent.com/scptr1155-gif/loadsystem/refs/heads/main/"
 local WAIT = 60
-local NEED = "1.4"
+local NEED = "1.5"
 
 local function loadCore()
   if type(S.CORE) == "table" and S.CORE.version == NEED then return S.CORE end
@@ -37,7 +40,7 @@ end
 local STR = {
   tr = {
     back = "← GERİ", title = "Script Oluştur", sub = "Scriptini yayınla; ID ile herkes çağırabilsin",
-    f_name = "Script adı", f_image = "Resim ID (rbxassetid)", f_desc = "Açıklama", f_code = "Script kodu (Lua)",
+    f_name = "Script adı", f_image = "Resim ID (Decal / Texture / Image) — boşsa varsayılan", f_desc = "Açıklama", f_code = "Script kodu (Lua)",
     publish = "YAYINLA", publishing = "Yayınlanıyor...",
     ld_pub = "SCRIPT YAYINLANIYOR", ld_wait = "Lütfen bekle", ld_done = "Yayın tamamlandı, son kontroller...",
     bad_name = "Script adı 3-40 karakter olmalı.", bad_code = "Script kodu boş olamaz.",
@@ -50,7 +53,7 @@ local STR = {
   },
   en = {
     back = "← BACK", title = "Create Script", sub = "Publish your script; anyone can call it by ID",
-    f_name = "Script name", f_image = "Image ID (rbxassetid)", f_desc = "Description", f_code = "Script code (Lua)",
+    f_name = "Script name", f_image = "Image ID (Decal / Texture / Image) — empty = default", f_desc = "Description", f_code = "Script code (Lua)",
     publish = "PUBLISH", publishing = "Publishing...",
     ld_pub = "PUBLISHING SCRIPT", ld_wait = "Please wait", ld_done = "Published, final checks...",
     bad_name = "Script name must be 3-40 characters.", bad_code = "Script code cannot be empty.",
@@ -186,6 +189,8 @@ function M.open(ctx)
     pubBtn.Text = T("publishing")
 
     spawn(function()
+      -- resim: decal ise gerçek resme çevrilir, boşsa varsayılan resim kullanılır
+      data.image = core.resolveImage(data.image)
       -- günlük hak önce kontrol edilir: hak yoksa beklemeye girilmez
       local kind, ga, gb = core.publishGate(nickClean, core.readIndex(), data.vip)
       if kind then
