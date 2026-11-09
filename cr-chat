@@ -1,4 +1,4 @@
--- cr-chat | CR CHAT (v1.1)  -> loadsystem deposuna "cr-chat" adıyla yükle
+-- cr-chat | CR CHAT (v1.2)  -> loadsystem deposuna "cr-chat" adıyla yükle
 -- =========================================================
 -- main-menu'deki CR CHAT tuşu veya search-profile'daki MESAJ GÖNDER tuşu bu dosyayı indirir ve
 -- open(ctx) çağırır.
@@ -7,6 +7,9 @@
 --    Aramasız: ARKADAŞLAR sekmesi (GENEL SOHBET + arkadaşlar) ve İSTEKLER sekmesi (kabul / reddet / iptal).
 --  * Sağ: sohbet. Mesajlar birkaç saniyede bir yenilenir. Gönder tuşu veya Enter.
 --  * Veriler roblox-game-star deposunda: friends.json, chat/*.json (hubcore v1.2 içindeki fonksiyonlarla).
+--
+-- v1.2: VIP (pass 2075710314): sohbette VIP'lerin adının yanında ★ (altın), arkadaş sınırı gösterilir (ARKADAŞLAR 3/5)
+--       ve sınır dolunca ekleme/kabul işlemi hemen uyarıyla durdurulur (VIP: 20, ücretsiz: 5). Gereken: hubcore v1.4
 --
 -- v1.1: İYİMSER GÖNDERİM: yazdığın mesaj / arkadaş isteği / kabul / red işlemi HEMEN kendi ekranında görünür,
 --       gerçek gönderim arkada yapılır. Başarısız olursa mesaj kırmızı olur (dokun: tekrar dene, ✕: sil),
@@ -23,7 +26,7 @@ local S = G.__LOADSYS or {}
 G.__LOADSYS = S
 
 local BASE = "https://raw.githubusercontent.com/scptr1155-gif/loadsystem/refs/heads/main/"
-local NEED = "1.3"
+local NEED = "1.4"
 
 local function loadCore()
   if type(S.CORE) == "table" and S.CORE.version == NEED then return S.CORE end
@@ -96,6 +99,7 @@ function M.open(ctx)
   local u = core.ui(ctx, { name = "Chat", title = T("title"), sub = T("sub"), back = true, backText = T("back") })
   if not u then return end
   local C, FNT = u.C, u.FNT
+  local GOLD = Color3.fromRGB(250, 204, 21)
   local W, H, PAD = u.W, u.H, u.PAD
   local AC, AR, ALN = Enum.TextXAlignment.Center, Enum.TextXAlignment.Right, Enum.TextXAlignment.Left
   local TRUNC = Enum.TextTruncate.AtEnd
@@ -140,6 +144,9 @@ function M.open(ctx)
   local overrides = {}                                -- bekleyen arkadaşlık işlemleri (sunucu yetişene kadar ekranda geçerli)
   local knownIncoming, incInit = {}, false
   local failStreak = 0
+  local myVip, vipKeys, vipLook, profUid, vipLookups = false, {}, {}, {}, 0
+  local ensureVip
+
 
   -- friends.json biçimi: links[a][b] = { s = "p"|"f", from = anahtar, t = zaman }
   local function setLink(db, a, b, v)
@@ -227,6 +234,17 @@ function M.open(ctx)
       if st == "received" then v = { s = "f", from = b, t = os.time() } else v = { s = "p", from = myKey, t = os.time() } end
     elseif fnName == "friendAccept" then
       v = { s = "f", from = b, t = os.time() }
+    end
+    -- arkadaş sınırı (ücretsiz 5, VIP 20): dolunca sahte başarı gösterme, hemen uyar
+    if fnName ~= "friendRemove" then
+      local becomesFriend = (fnName == "friendAccept") or (st == "received")
+      local cnt = core.friendCounts(fdb, myKey)
+      local lim = core.limits(myVip).friends
+      local full = becomesFriend and (cnt.friends >= lim) or ((not becomesFriend) and (cnt.friends + cnt.outgoing >= lim))
+      if full then
+        u.toast(core.friendLimitMsg(lang, myVip), C.danger, 7)
+        return
+      end
     end
     -- 1) HEMEN kendi ekranında göster
     setLink(fdb, myKey, b, v)
@@ -343,6 +361,7 @@ function M.open(ctx)
   updateTabLabels = function()
     local fl = core.friendList(fdb, myNick)
     tabReq.Text = T("tab_req") .. ((#fl.incoming > 0) and (" (" .. #fl.incoming .. ")") or "")
+    tabFriends.Text = T("tab_friends") .. " " .. #fl.friends .. "/" .. core.limits(myVip).friends
   end
 
   tabFriends.MouseButton1Click:Connect(function() tab = "friends"; styleTabs(); renderList() end)
@@ -410,11 +429,11 @@ function M.open(ctx)
     local from = math.max(1, #msgs - MAX_SHOW + 1)
     for i = from, #msgs do
       local m = msgs[i]
-      items[#items + 1] = { mine = (tostring(m.f) == myKey), n = tostring(m.n or "?"), t = m.t, text = tostring(m.m or "") }
+      items[#items + 1] = { mine = (tostring(m.f) == myKey), k = tostring(m.f), n = tostring(m.n or "?"), t = m.t, text = tostring(m.m or "") }
     end
     for _, p in ipairs(pending) do
       if current and p.file == current.file then
-        items[#items + 1] = { mine = true, n = myNick, t = p.t, text = p.text, p = p }
+        items[#items + 1] = { mine = true, k = myKey, n = myNick, t = p.t, text = p.text, p = p }
       end
     end
     if #items == 0 then
@@ -431,10 +450,13 @@ function M.open(ctx)
         Name = "Row", Size = UDim2.fromOffset(RW - 8, 18 + bh), BackgroundTransparency = 1, LayoutOrder = i, ZIndex = 3,
       }, mscroll)
       local who = mine and T("you") or it.n
+      local isV = mine and myVip or (vipKeys[it.k] == true)
+      if not mine and vipKeys[it.k] == nil and ensureVip then ensureVip(it.k) end
+      if isV then who = "★ " .. who end
       local tag = hhmm(it.t)
       local failed = it.p and it.p.state == "failed"
       if it.p then tag = failed and T("failed_tag") or T("sending_tag") end
-      u.label(row, who .. "  ·  " .. tag, 4, 0, RW - 16, 16, 10, FNT.med, failed and C.danger or C.faint,
+      u.label(row, who .. "  ·  " .. tag, 4, 0, RW - 16, 16, 10, FNT.med, failed and C.danger or (isV and GOLD or C.faint),
         { TextXAlignment = mine and AR or ALN, TextTruncate = TRUNC })
       local bub = u.new(failed and "TextButton" or "Frame", {
         Size = UDim2.fromOffset(bw, bh), Position = UDim2.fromOffset(mine and (RW - 8 - bw) or 0, 18),
@@ -476,6 +498,8 @@ function M.open(ctx)
     hTitle.Text = current.nick
     local st = core.friendState(fdb, myNick, current.nick)
     hSub.Text = (st == "friend") and T("st_friend") or (st == "sent") and T("st_sent") or (st == "received") and T("st_recv") or ""
+    if vipKeys[current.key] then hSub.Text = (hSub.Text ~= "" and (hSub.Text .. "  ·  ") or "") .. "★ VIP"
+    elseif vipKeys[current.key] == nil and ensureVip then ensureVip(current.key) end
     hBtn.Visible = true
     local label = (st == "friend") and T("b_remove") or (st == "sent") and T("b_cancel") or (st == "received") and T("b_accept") or T("b_add")
     hBtn.Text = label
@@ -540,6 +564,23 @@ function M.open(ctx)
     nick = core.trim(nick)
     if nick == "" or core.nickKey(nick) == myKey then return end
     openChat({ kind = "dm", nick = nick, key = core.nickKey(nick), file = core.chatFile(myNick, nick) })
+  end
+
+  -- Başka oyuncunun VIP'liğini arka planda sorar (oturum başına en fazla 30 sorgu); VIP ise ekranı tazeler
+  ensureVip = function(key)
+    if vipKeys[key] ~= nil or vipLook[key] or vipLookups >= 30 then return end
+    local uid = profUid[key]
+    if not uid or uid <= 0 or type(core.isVip) ~= "function" then return end
+    vipLook[key] = true
+    vipLookups = vipLookups + 1
+    spawn(function()
+      local v = core.isVip(uid)
+      vipKeys[key] = v and true or false
+      if v and u.alive() then
+        if current then renderMsgs() end
+        updateHeader()
+      end
+    end)
   end
 
   local function checkIncoming(announce)
@@ -644,6 +685,16 @@ function M.open(ctx)
   styleTabs()
   renderList()
 
+  -- kendi VIP durumum (arkadaş sınırı ve rozet için)
+  spawn(function()
+    if type(core.myVip) ~= "function" then return end
+    myVip = core.myVip() and true or false
+    if u.alive() then
+      updateTabLabels()
+      if current then renderMsgs(); updateHeader() end
+    end
+  end)
+
   spawn(function()
     local list = core.readPlayerList()
     local db = core.readProfiles()
@@ -665,7 +716,10 @@ function M.open(ctx)
     end
     if list then for _, r in ipairs(list) do add(r.nick) end end
     for key, p in pairs(db.profiles) do
-      if type(p) == "table" then add(tostring(p.nick or key)) end
+      if type(p) == "table" then
+        add(tostring(p.nick or key))
+        profUid[core.nickKey(tostring(p.nick or key))] = num(p.uid)
+      end
     end
     players = out
     if not list then u.toast(T("list_fail"), C.danger, 5) end
