@@ -1,4 +1,4 @@
--- search-profile | OYUNCU ARA + PROFİL (v1.1)  -> loadsystem deposuna "search-profile" adıyla yükle
+-- search-profile | OYUNCU ARA + PROFİL (v1.2)  -> loadsystem deposuna "search-profile" adıyla yükle
 -- =========================================================
 -- main-menu'deki OYUNCU ARA tuşu (veya scripthub) bu dosyayı indirir ve open(ctx) çağırır.
 --
@@ -8,6 +8,9 @@
 --  * Kendi profilinde PROFİLİ DÜZENLE: durum, hakkında, profil resmi (rbxassetid; boşsa Roblox avatarı).
 --  * Veriler: loadsystem/player (sadece takma ad + Roblox adı okunur, şifre okunmaz), roblox-game-star/profiles.json,
 --    roblox-game-star/hub-index.json. Gereken: hubcore v1.1
+--
+-- v1.2: VIP: profilde ★ VIP rozeti (pass 2075710314, canlı kontrol). Kendi profilinde ★ VIP AL tuşu (bağlantıyı panoya kopyalar).
+--       Gereken: hubcore v1.4
 --
 -- v1.1: Başkasının profilinde MESAJ GÖNDER tuşu: cr-chat açılır ve o oyuncuyla özel sohbet başlar (ARKADAŞ EKLE sohbet ekranında).
 --       Gereken: hubcore v1.2
@@ -19,7 +22,7 @@ local S = G.__LOADSYS or {}
 G.__LOADSYS = S
 
 local BASE = "https://raw.githubusercontent.com/scptr1155-gif/loadsystem/refs/heads/main/"
-local NEED = "1.3"
+local NEED = "1.4"
 
 local function loadCore()
   if type(S.CORE) == "table" and S.CORE.version == NEED then return S.CORE end
@@ -48,6 +51,7 @@ local STR = {
     f_bio = "Hakkında (en fazla 200 karakter)", save = "KAYDET", cancel = "İPTAL",
     saved = "Profil kaydedildi.", fail = "İşlem başarısız: ", bad_image = "Resim ID sadece rakamlardan oluşmalı.",
     msg_btn = "MESAJ GÖNDER", ld_chat = "SOHBET YÜKLENİYOR",
+    vip_buy = "★ VIP AL", vip_on = "★ VIP AKTİF", vip_copied = "VIP bağlantısı panoya kopyalandı. Tarayıcıda aç.", vip_nocopy = "Panoya kopyalanamadı. Bağlantı: ",
   },
   en = {
     back = "← BACK", title = "Find Players", t_profile = "Profile", t_edit = "Edit Profile",
@@ -64,6 +68,7 @@ local STR = {
     f_bio = "About (max 200 characters)", save = "SAVE", cancel = "CANCEL",
     saved = "Profile saved.", fail = "Failed: ", bad_image = "Image ID must contain digits only.",
     msg_btn = "SEND MESSAGE", ld_chat = "LOADING CHAT",
+    vip_buy = "★ GET VIP", vip_on = "★ VIP ACTIVE", vip_copied = "VIP link copied. Open it in your browser.", vip_nocopy = "Could not copy. Link: ",
   },
 }
 
@@ -92,6 +97,7 @@ function M.open(ctx)
   local C, FNT = u.C, u.FNT
   local W, H, PAD, IW = u.W, u.H, u.PAD, u.IW
   local AC = Enum.TextXAlignment.Center
+  local GOLD = Color3.fromRGB(250, 204, 21)
   local TRUNC = Enum.TextTruncate.AtEnd
 
   -- Durum
@@ -333,6 +339,9 @@ function M.open(ctx)
 
   local editBtn = u.pill(T("edit_btn"), PAD, 442, 300, 48, true, pv)
   local chatBtn = u.pill(T("msg_btn"), PAD, 442, 300, 48, true, pv)
+  local vipBtn = u.pill(T("vip_buy"), PAD + 312, 442, 300, 48, GOLD, pv)
+  vipBtn.TextColor3 = Color3.fromRGB(34, 26, 0)
+  vipBtn.TextSize = 13
 
   local function clearScripts()
     for _, c in ipairs(sList:GetChildren()) do
@@ -349,7 +358,8 @@ function M.open(ctx)
     local rec, p, st = d.rec, d.p, d.st
     u.title.Text = T("t_profile")
 
-    pNick.Text = rec.nick .. ((rec.key == myKey) and ("   ·   " .. T("you")) or "")
+    pNick.Text = rec.nick .. ((rec.key == myKey) and ("   ·   " .. T("you")) or "") .. (d.vip and "   ★ VIP" or "")
+    pNick.TextColor3 = d.vip and GOLD or C.text
     local status = tostring(p.status or "")
     pStatus.Text = (status ~= "") and status or T("no_status")
     local rid = (rec.key == myKey and myUid > 0) and myUid or num(rec.uid)
@@ -397,6 +407,8 @@ function M.open(ctx)
 
     editBtn.Visible = d.self == true
     chatBtn.Visible = d.self ~= true
+    vipBtn.Visible = d.self == true
+    vipBtn.Text = d.vip and T("vip_on") or T("vip_buy")
   end
 
   ----------------------------------------------------------
@@ -448,6 +460,10 @@ function M.open(ctx)
       if (pr.name or "") ~= "" and rec.name == "" then rec.name = tostring(pr.name) end
       rec.avatar = pr.avatar
       if num(rec.avatar) <= 0 then recUid(rec) end   -- avatar için UserId çöz (loading ekranı arkasında)
+      local vuid = (rec.key == myKey and myUid > 0) and myUid or num(rec.uid)
+      if vuid <= 0 then vuid = num(recUid(rec)) end
+      local isVipRec = false
+      if vuid > 0 and type(core.isVip) == "function" then isVipRec = core.isVip(vuid) and true or false end
       rec.stats = { count = st.count, uses = st.uses, good = st.good, bad = st.bad }
 
       local rest = 0.9 - (os.clock() - t0)
@@ -455,7 +471,7 @@ function M.open(ctx)
       busy = false
       if not u.alive() then return end
       u.loading(false)
-      showProfile({ rec = rec, p = pr, st = st, self = (rec.key == myKey) })
+      showProfile({ rec = rec, p = pr, st = st, self = (rec.key == myKey), vip = isVipRec })
     end)
   end
 
@@ -465,6 +481,12 @@ function M.open(ctx)
   editBtn.MouseButton1Click:Connect(function()
     if busy or view ~= "profile" then return end
     showEdit()
+  end)
+
+  vipBtn.MouseButton1Click:Connect(function()
+    if view ~= "profile" or not shown or not shown.self or shown.vip then return end
+    local ok, url = core.buyVip()
+    if ok then u.toast(T("vip_copied"), C.ok, 5) else u.toast(T("vip_nocopy") .. tostring(url), C.muted, 8) end
   end)
 
   -- MESAJ GÖNDER: cr-chat indirilir, bu ekran kapanır, o oyuncuyla özel sohbet açılır.
