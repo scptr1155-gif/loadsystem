@@ -1,9 +1,13 @@
--- hubcore | ORTAK KÜTÜPHANE (v1.4)  -> loadsystem deposuna "hubcore" adıyla yükle
+-- hubcore | ORTAK KÜTÜPHANE (v1.5)  -> loadsystem deposuna "hubcore" adıyla yükle
 -- =========================================================
 -- scripthub, create a code, studio, profile, script-menu ve search-profile bu dosyayı kullanır.
 -- İçerik: base64, json, HTTP, api-key okuma, index güncelleme (çakışmaya dayanıklı),
 -- dosya yaz/sil, günlük limit, istatistikler ve ortak pencere (ui) üreticisi.
 -- ui: GERİ / X (küçült -> "CR" logosu) sistemi burada, tüm ekranlar aynısını kullanır.
+--
+-- v1.5: resolveImage(id): Decal / Texture / Image ID kabul eder. Decal ID'sini gerçek resim (texture) ID'sine çevirir
+--       (game:GetObjects ile); çevrilemezse girilen ID aynen kullanılır. ID boşsa varsayılan resim (DEFAULT_IMAGE) döner.
+--       Varsayılan ID arayüzde alan içinde gösterilmez; sadece resim görünür.
 --
 -- v1.4 yenilikleri: VIP (game pass 2075710314)
 --  * M.VIP: pass ID, satın alma bağlantısı ve limitler. Ücretsiz: 10 script, 5 arkadaş, günde 1 yayın.
@@ -38,7 +42,7 @@
 --  * Script Hub logosu: LOGO_ID (decal) + M.logo(); core.ui(..., { logo = true }) başlığa logo koyar.
 --  * Ortak JSON güncelleyici (mutateJson): index ve profiles aynı çakışma korumasını kullanır.
 
-local VERSION = "1.4"
+local VERSION = "1.5"
 local G = (type(getgenv) == "function" and getgenv()) or _G
 local S = G.__LOADSYS or {}
 G.__LOADSYS = S
@@ -588,6 +592,39 @@ function M.dailyLeft(nick, idx)
   return 0
 end
 
+
+--------------------------------------------------------------
+-- Script resmi: Decal / Texture / Image ID
+--------------------------------------------------------------
+M.DEFAULT_IMAGE = 75305814426740
+
+-- id: sayı ya da nil. Dönüş: kullanılacak resim (texture) ID'si (her zaman > 0)
+function M.resolveImage(id)
+  id = math.floor(M.num(id))
+  if id <= 0 then return M.DEFAULT_IMAGE end
+  local tex = M.callTimeout(function()
+    local objs = game:GetObjects("rbxassetid://" .. tostring(id))
+    local o = objs and objs[1]
+    if not o then return nil end
+    local t = nil
+    if o:IsA("Decal") or o:IsA("Texture") then
+      t = o.Texture
+    elseif o:IsA("ImageLabel") or o:IsA("ImageButton") then
+      t = o.Image
+    else
+      local d = o:FindFirstChildWhichIsA("Decal", true) or o:FindFirstChildWhichIsA("Texture", true)
+      if d then t = d.Texture end
+    end
+    pcall(function() o:Destroy() end)
+    return t
+  end, 6)
+  if type(tex) == "string" then
+    local n = tex:match("rbxassetid://(%d+)") or tex:match("[?&]id=(%d+)") or tex:match("/asset/%?id=(%d+)")
+    n = tonumber(n or "")
+    if n and n > 0 then return n end
+  end
+  return id   -- zaten resim (texture/image) ID'si ya da çevrilemedi
+end
 
 --------------------------------------------------------------
 -- VIP (game pass) ve limitler
