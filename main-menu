@@ -52,7 +52,7 @@ local CONFIG = {
   MENU_URL = BASE .. "main-menu",
   SETTINGS_FILE = "loadsystem_settings.json",
 }
-local CORE_NEED = "1.4"
+local CORE_NEED = "1.5"
 local LOGO_ID = 136958517701160   -- Script Hub logosu (decal)
 
 local ACCENTS = {
