@@ -1,6 +1,8 @@
--- create a code | SCRIPT OLUŞTUR VE YAYINLA (v3.1)
+-- create a code | SCRIPT OLUŞTUR VE YAYINLA (v3.2)
 -- =========================================================
 -- scripthub'daki CREATE tuşu bu dosyayı indirir ve open(ctx) çağırır.
+-- v3.2: VIP limitleri (hubcore v1.4): ücretsiz 10 script ve günde 1, VIP (pass 2075710314) 50 script ve günde 3 yayın.
+--
 -- v3.1:
 -- * Her kayda ownerNick (yayınlayan takma ad) eklenir; Studio/Profil bunu kullanır.
 --   owner (UserId) bilgi olarak saklanmaya devam eder.
@@ -19,7 +21,7 @@ G.__LOADSYS = S
 
 local BASE = "https://raw.githubusercontent.com/scptr1155-gif/loadsystem/refs/heads/main/"
 local WAIT = 60
-local NEED = "1.3"
+local NEED = "1.4"
 
 local function loadCore()
   if type(S.CORE) == "table" and S.CORE.version == NEED then return S.CORE end
@@ -41,7 +43,8 @@ local STR = {
     bad_name = "Script adı 3-40 karakter olmalı.", bad_code = "Script kodu boş olamaz.",
     bad_syntax = "Kodda sözdizimi hatası: ", too_big = "Kod çok büyük (en fazla 200000 karakter).",
     pub_ok = "Yayınlandı! Script ID: ", pub_fail = "Yayınlanamadı: ", copied = " (panoya kopyalandı)",
-    daily = "Günde 1 script yayınlayabilirsin. Yaklaşık %d saat sonra tekrar dene.",
+    daily = "Bugünlük yayın hakkın doldu. Yaklaşık %d saat sonra tekrar dene.",
+    total_limit = "Script limitine ulaştın (%d/%d). Ana menü > VIP ile %d scripte çıkarabilirsin.",
     write_fail = "Kod yazılamadı", id_full = "ID sınırına ulaşıldı.",
     retry_hint = " (Aynı kodla tekrar basarsan yine de yayınlanır.)",
   },
@@ -53,7 +56,8 @@ local STR = {
     bad_name = "Script name must be 3-40 characters.", bad_code = "Script code cannot be empty.",
     bad_syntax = "Syntax error in code: ", too_big = "Code is too large (max 200000 characters).",
     pub_ok = "Published! Script ID: ", pub_fail = "Could not publish: ", copied = " (copied to clipboard)",
-    daily = "You can publish 1 script per day. Try again in about %d hour(s).",
+    daily = "You used today's publishing limit. Try again in about %d hour(s).",
+    total_limit = "You reached the script limit (%d/%d). Main menu > VIP raises it to %d scripts.",
     write_fail = "Could not write code", id_full = "ID limit reached.",
     retry_hint = " (Press again with the same code to publish anyway.)",
   },
@@ -91,8 +95,9 @@ function M.open(ctx)
     local wroteId = nil
     return core.mutateIndex(function(idx, h)
       if not wroteId then
-        local left = core.dailyLeft(d.ownerNick, idx)
-        if left > 0 then return false, string.format(T("daily"), math.ceil(left / 3600)) end
+        local kind, a, b = core.publishGate(d.ownerNick, idx, d.vip)
+        if kind == "total" then return false, string.format(T("total_limit"), a, b, core.VIP.SCRIPTS.vip) end
+        if kind == "daily" then return false, string.format(T("daily"), math.ceil(a / 3600)) end
 
         local id = math.max(1, math.floor(tonumber(idx.next) or 1))
         for _, e in ipairs(idx.scripts) do
@@ -172,21 +177,26 @@ function M.open(ctx)
     local imgId = tonumber(core.trim(fImage.Text):match("%d+") or "")
     local uid = core.userId()
     local nickClean = core.cleanText(nick, 30)
+    local vipNow = core.myVip()
     local data = {
       name = name, desc = desc, code = code, author = nickClean, ownerNick = nickClean,
-      image = imgId, owner = uid,
+      image = imgId, owner = uid, vip = vipNow,
     }
     publishing = true
     pubBtn.Text = T("publishing")
 
     spawn(function()
       -- günlük hak önce kontrol edilir: hak yoksa beklemeye girilmez
-      local left = core.dailyLeft(nickClean, core.readIndex())
-      if left > 0 then
+      local kind, ga, gb = core.publishGate(nickClean, core.readIndex(), data.vip)
+      if kind then
         publishing = false
         if u.alive() then
           pubBtn.Text = T("publish")
-          toast(string.format(T("daily"), math.ceil(left / 3600)), C.danger, 8)
+          if kind == "total" then
+            toast(string.format(T("total_limit"), ga, gb, core.VIP.SCRIPTS.vip), C.danger, 8)
+          else
+            toast(string.format(T("daily"), math.ceil(ga / 3600)), C.danger, 8)
+          end
         end
         return
       end
