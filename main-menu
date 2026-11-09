@@ -1,7 +1,12 @@
--- main-menu | YÜKLEME SİSTEMİ — ANA MENÜ (v3.4.0)
+-- main-menu | YÜKLEME SİSTEMİ — ANA MENÜ (v3.5.0)
 -- =========================================================
 -- `verify` giriş/kayıt sonrasında bu dosyayı çalıştırır. Arayüz kurulunca
 -- S.MAIN_READY = true olur (verify siyah perdeyi buna göre kaldırır).
+--
+-- v3.5.0:
+-- * Yeni VIP sayfası (sol menüde ★ VIP): game pass 2075710314. Ücretsiz / VIP limitleri, kendi kullanımın
+--   (script, arkadaş, günlük yayın), VIP AL (bağlantıyı panoya kopyalar) ve YENİLE tuşları. VIP'sen sol alttaki
+--   profil kutusunda ★ VIP rozeti çıkar. Gereken: hubcore v1.4.
 --
 -- v3.4.0:
 -- * Yeni CR CHAT tuşu (OYUNCU ARA'nın yanında): `cr-chat` indirilir, ana menü kapanır, sohbet ekranı açılır.
@@ -36,7 +41,8 @@ G.__LOADSYS = S
 --------------------------------------------------------------
 local BASE = "https://raw.githubusercontent.com/scptr1155-gif/loadsystem/refs/heads/main/"
 local CONFIG = {
-  VERSION = "3.4.0",
+  VERSION = "3.5.0",
+  VIP_URL = "https://www.roblox.com/tr/game-pass/2075710314/scripthub-10-script",
   REPO = "scptr1155-gif/loadsystem",
   START_URL = "",
   RESTART_URL = BASE .. "verify",
@@ -46,7 +52,7 @@ local CONFIG = {
   MENU_URL = BASE .. "main-menu",
   SETTINGS_FILE = "loadsystem_settings.json",
 }
-local CORE_NEED = "1.3"
+local CORE_NEED = "1.4"
 local LOGO_ID = 136958517701160   -- Script Hub logosu (decal)
 
 local ACCENTS = {
@@ -149,6 +155,14 @@ local STR = {
     hub = "SCRIPT HUB", hub_d = "Scriptleri keşfet ve paylaş",
     search = "OYUNCU ARA", ld_search = "OYUNCU ARAMA YÜKLENİYOR",
     chat = "CR CHAT", ld_chat = "CR CHAT YÜKLENİYOR",
+    nav_vip = "★ VIP", vip_title = "VIP", vip_on = "★ VIP aktif — teşekkürler!", vip_off = "Şu an VIP değilsin",
+    vip_err = "VIP kontrol edilemedi. Bağlantını kontrol edip YENİLE'ye bas.", vip_checking = "Kontrol ediliyor...",
+    vip_col_free = "ÜCRETSİZ", vip_col_vip = "VIP", vip_col_use = "SENDE", vip_r_scripts = "Yayınlanan script (toplam)",
+    vip_r_friends = "Arkadaş", vip_r_daily = "Günlük yayın",
+    vip_perks = "★ VIP rozeti: profilinde, sohbette ve ana menüde\n★ Daha fazla script, daha fazla arkadaş, günde 3 yayın",
+    vip_buy = "★ VIP AL", vip_refresh = "YENİLE",
+    vip_hint = "VIP AL bağlantıyı panoya kopyalar; tarayıcıya yapıştırıp aç. Aldıktan sonra YENİLE'ye bas (Roblox kontrolü birkaç dakika gecikebilir).",
+    vip_copied = "Bağlantı panoya kopyalandı. Tarayıcıda aç.", vip_nocopy = "Panoya kopyalanamadı. Bağlantı: ",
     set_title = "Ayarlar", set_saved = "Tercihlerin bu cihazda saklanır.",
     set_nosave = "Tercihler yalnızca bu oturumda geçerli (executor dosya kaydını desteklemiyor).",
     accent = "Vurgu rengi", accent_d = "Düğmelerde ve işaretlerde kullanılan renk",
@@ -175,6 +189,14 @@ local STR = {
     hub = "SCRIPT HUB", hub_d = "Discover and share scripts",
     search = "FIND PLAYERS", ld_search = "LOADING PLAYER SEARCH",
     chat = "CR CHAT", ld_chat = "LOADING CR CHAT",
+    nav_vip = "★ VIP", vip_title = "VIP", vip_on = "★ VIP active — thank you!", vip_off = "You are not VIP right now",
+    vip_err = "Could not check VIP. Check your connection and press REFRESH.", vip_checking = "Checking...",
+    vip_col_free = "FREE", vip_col_vip = "VIP", vip_col_use = "YOURS", vip_r_scripts = "Published scripts (total)",
+    vip_r_friends = "Friends", vip_r_daily = "Daily publishing",
+    vip_perks = "★ VIP badge: on your profile, in chat and in the main menu\n★ More scripts, more friends, 3 publishes per day",
+    vip_buy = "★ GET VIP", vip_refresh = "REFRESH",
+    vip_hint = "GET VIP copies the link; paste it in your browser. After buying press REFRESH (Roblox may take a few minutes to update).",
+    vip_copied = "Link copied. Open it in your browser.", vip_nocopy = "Could not copy. Link: ",
     set_title = "Settings", set_saved = "Your preferences are saved on this device.",
     set_nosave = "Preferences only apply to this session (your executor cannot save files).",
     accent = "Accent color", accent_d = "Color used on buttons and highlights",
@@ -233,6 +255,7 @@ local C = {
 }
 local F = { reg = Enum.Font.Gotham, med = Enum.Font.GothamMedium, bold = Enum.Font.GothamBold }
 local AL, AC = Enum.TextXAlignment.Left, Enum.TextXAlignment.Center
+local GOLD = Color3.fromRGB(250, 204, 21)
 
 local accent = ACCENTS[settings.accent] or ACCENTS[1]
 local accentHi = accent:Lerp(Color3.new(1, 1, 1), 0.18)
@@ -383,6 +406,20 @@ local function fetchLoad(url)
   return true, mod
 end
 
+-- hubcore'u yükler (VIP sayfası için)
+local function getCore()
+  if type(S.CORE) == "table" and S.CORE.version == CORE_NEED then return S.CORE end
+  local okH, src = pcall(function() return game:HttpGet(BASE .. "hubcore?t=" .. tostring(os.time())) end)
+  if okH and type(src) == "string" and type(loadstring) == "function" then
+    local fn = loadstring(src)
+    if fn then
+      local okR, c = pcall(fn)
+      if okR and type(c) == "table" then return c end
+    end
+  end
+  return nil
+end
+
 -- Giriş yapan takma adın profilini (yoksa) arka planda oluşturur. Menüyü asla bozmaz.
 S.TOUCHED = S.TOUCHED or {}
 local function touchProfile(nickName)
@@ -441,7 +478,7 @@ local function build()
 
   local conns, ambient = {}, {}
   local alive, closing, current = true, false, 0
-  local goTo, toast, openModal, closeModal, startScript, doLogout, closeMenu
+  local goTo, toast, openModal, closeModal, startScript, doLogout, closeMenu, refreshVip
   local showLoading, hideLoading, openHubScreen, openSearchScreen, openChatScreen
 
   local WIN_W, WIN_H, SIDE_W = 880, 520, 224
@@ -519,8 +556,8 @@ local function build()
   label(sidebar, "YÜKLEME SİSTEMİ", 72, 24, 140, 18, 14, F.bold, C.text)
   label(sidebar, "v" .. CONFIG.VERSION, 72, 43, 140, 14, 11, F.reg, C.faint)
 
-  local NAV_Y = { 100, 150 }
-  local NAV_KEY = { "nav_home", "nav_settings" }
+  local NAV_Y = { 100, 150, 200 }
+  local NAV_KEY = { "nav_home", "nav_settings", "nav_vip" }
   local navButtons = {}
 
   local indicator = new("Frame", {
@@ -529,9 +566,9 @@ local function build()
   round(indicator, 2)
   useAccent(indicator, "BackgroundColor3")
 
-  local function navIndex(idx) return (idx == 2) and 2 or 1 end
+  local function navIndex(idx) return (idx == 2 or idx == 3) and idx or 1 end
 
-  for i = 1, 2 do
+  for i = 1, 3 do
     local b = new("TextButton", {
       Size = UDim2.fromOffset(192, 42), Position = UDim2.fromOffset(16, NAV_Y[i]),
       BackgroundColor3 = C.cardHi, BackgroundTransparency = 1, BorderSizePixel = 0,
@@ -589,6 +626,7 @@ local function build()
   }, chip)
   round(chipDot, 4)
   tl(chip, "online", 66, 29, 110, 16, 10, F.med, C.ok, AL, { ZIndex = 4 })
+  local chipVip = label(chip, "★ VIP", 130, 29, 52, 16, 10, F.bold, GOLD, Enum.TextXAlignment.Right, { ZIndex = 4, Visible = false })
   safe(function()
     local t = TweenService:Create(chipDot,
       TweenInfo.new(1.2, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), { BackgroundTransparency = 0.7 })
@@ -607,7 +645,7 @@ local function build()
   stroke(content, C.line, 1)
 
   local pages = {}
-  for i = 1, 2 do
+  for i = 1, 3 do
     pages[i] = new("Frame", {
       Name = "Page" .. i, Size = UDim2.fromOffset(CW, WIN_H), Position = UDim2.fromOffset(0, 0),
       BackgroundTransparency = 1, Visible = false, ZIndex = 2,
@@ -1136,6 +1174,106 @@ local function build()
   confirmBtn.MouseButton1Click:Connect(function() if doLogout then doLogout() end end)
 
   ------------------------------------------------------------
+  -- Sayfa 3: VIP
+  ------------------------------------------------------------
+  local vp = pages[3]
+  tl(vp, "vip_title", PAD, 30, IW, 30, 22, F.bold, C.text)
+  local vipStatus = label(vp, "", PAD, 62, IW, 18, 13, F.med, C.muted, AL, { TextTruncate = Enum.TextTruncate.AtEnd })
+
+  local CX = { PAD + 210, PAD + 320, PAD + 430 }
+  tl(vp, "vip_col_free", CX[1], 98, 100, 16, 10, F.med, C.faint, AC)
+  tl(vp, "vip_col_vip", CX[2], 98, 100, 16, 10, F.bold, GOLD, AC)
+  tl(vp, "vip_col_use", CX[3], 98, 142, 16, 10, F.med, C.faint, AC)
+
+  local function vipRow(i, key, freeV, vipV)
+    local y = 118 + (i - 1) * 44
+    tl(vp, key, PAD, y, 205, 40, 13, F.med, C.text, AL, { TextTruncate = Enum.TextTruncate.AtEnd })
+    local f = label(vp, tostring(freeV), CX[1], y, 100, 40, 14, F.med, C.muted, AC)
+    local v = label(vp, tostring(vipV), CX[2], y, 100, 40, 14, F.bold, GOLD, AC)
+    local use = label(vp, "-", CX[3], y, 142, 40, 14, F.bold, C.text, AC)
+    new("Frame", {
+      Size = UDim2.fromOffset(IW, 1), Position = UDim2.fromOffset(PAD, y + 41), BackgroundColor3 = C.line, BorderSizePixel = 0, ZIndex = 2,
+    }, vp)
+    return f, v, use
+  end
+  local rsF, rsV, rsU = vipRow(1, "vip_r_scripts", 10, 50)
+  local rfF, rfV, rfU = vipRow(2, "vip_r_friends", 5, 20)
+  local rdF, rdV, rdU = vipRow(3, "vip_r_daily", 1, 3)
+
+  tl(vp, "vip_perks", PAD, 262, IW, 44, 12, F.med, C.muted, AL, { TextWrapped = true, TextYAlignment = Enum.TextYAlignment.Top })
+
+  local buyBtn = new("TextButton", {
+    Size = UDim2.fromOffset(IW - 136, 52), Position = UDim2.fromOffset(PAD, 326), BackgroundColor3 = GOLD, BorderSizePixel = 0,
+    Text = "", AutoButtonColor = false, ZIndex = 3,
+  }, vp)
+  round(buyBtn, 14)
+  tl(buyBtn, "vip_buy", 0, 0, IW - 136, 52, 16, F.bold, Color3.fromRGB(34, 26, 0), AC, { ZIndex = 4, Size = UDim2.fromScale(1, 1) })
+  buyBtn.MouseEnter:Connect(function() tw(buyBtn, { BackgroundColor3 = GOLD:Lerp(Color3.new(1, 1, 1), 0.2) }, 0.15) end)
+  buyBtn.MouseLeave:Connect(function() tw(buyBtn, { BackgroundColor3 = GOLD }, 0.15) end)
+
+  local refBtn = new("TextButton", {
+    Size = UDim2.fromOffset(124, 52), Position = UDim2.fromOffset(PAD + IW - 124, 326), BackgroundColor3 = C.card, BorderSizePixel = 0,
+    Text = "", AutoButtonColor = false, ZIndex = 3,
+  }, vp)
+  round(refBtn, 14)
+  stroke(refBtn, C.line, 1)
+  tl(refBtn, "vip_refresh", 0, 0, 124, 52, 13, F.bold, C.text, AC, { ZIndex = 4, Size = UDim2.fromScale(1, 1) })
+  refBtn.MouseEnter:Connect(function() tw(refBtn, { BackgroundColor3 = C.cardHi }, 0.15) end)
+  refBtn.MouseLeave:Connect(function() tw(refBtn, { BackgroundColor3 = C.card }, 0.15) end)
+
+  tl(vp, "vip_hint", PAD, 392, IW, 34, 11, F.reg, C.faint, AL, { TextWrapped = true, TextYAlignment = Enum.TextYAlignment.Top })
+  label(vp, CONFIG.VIP_URL, PAD, 436, IW, 14, 10, F.reg, C.faint, AL, { TextTruncate = Enum.TextTruncate.AtEnd })
+
+  local vipBusy = false
+  refreshVip = function(force, silent)
+    if vipBusy then return end
+    vipBusy = true
+    if not silent then
+      safe(function() vipStatus.Text = T("vip_checking"); vipStatus.TextColor3 = C.muted end)
+    end
+    spawn(function()
+      local core = getCore()
+      if not core or type(core.myVip) ~= "function" or type(core.limits) ~= "function" then
+        vipBusy = false
+        if alive and not silent then safe(function() vipStatus.Text = T("vip_err"); vipStatus.TextColor3 = C.danger end) end
+        return
+      end
+      local vip, err = core.myVip(force)
+      local idx = core.readIndex()
+      local fdb = core.readFriends()
+      vipBusy = false
+      if not alive then return end
+      safe(function()
+        local lim = core.limits(vip)
+        local total, today = core.scriptCounts(nick, idx)
+        local fc = core.friendCounts(fdb, core.nickKey(nick))
+        chipVip.Visible = vip and true or false
+        buyBtn.Visible = not vip
+        if vip then
+          vipStatus.Text, vipStatus.TextColor3 = T("vip_on"), GOLD
+        elseif err then
+          vipStatus.Text, vipStatus.TextColor3 = T("vip_err"), C.danger
+        else
+          vipStatus.Text, vipStatus.TextColor3 = T("vip_off"), C.muted
+        end
+        rsF.Text, rsV.Text = tostring(core.VIP.SCRIPTS.free), tostring(core.VIP.SCRIPTS.vip)
+        rfF.Text, rfV.Text = tostring(core.VIP.FRIENDS.free), tostring(core.VIP.FRIENDS.vip)
+        rdF.Text, rdV.Text = tostring(core.VIP.DAILY.free), tostring(core.VIP.DAILY.vip)
+        rsU.Text = total .. " / " .. lim.scripts
+        rfU.Text = fc.friends .. " / " .. lim.friends
+        rdU.Text = today .. " / " .. lim.daily
+      end)
+    end)
+  end
+
+  buyBtn.MouseButton1Click:Connect(function()
+    local ok = false
+    if type(setclipboard) == "function" then ok = pcall(setclipboard, CONFIG.VIP_URL) end
+    if ok then toast(T("vip_copied"), C.ok) else toast(T("vip_nocopy") .. CONFIG.VIP_URL, C.muted) end
+  end)
+  refBtn.MouseButton1Click:Connect(function() refreshVip(true) end)
+
+  ------------------------------------------------------------
   -- Sayfa geçişi
   ------------------------------------------------------------
   local switchToken = 0
@@ -1147,6 +1285,7 @@ local function build()
     local token = switchToken
 
     refreshNav()
+    if idx == 3 and refreshVip then refreshVip(false) end
     tw(indicator, { Position = UDim2.fromOffset(0, NAV_Y[navIndex(idx)] + 10) }, 0.3, 0, Enum.EasingStyle.Quint)
 
     for i, pf in ipairs(pages) do
@@ -1223,6 +1362,12 @@ local function build()
   else
     fitWindow(false)
   end
+
+  -- giriş yapınca VIP durumunu sessizce kontrol et (profil kutusundaki rozet için)
+  spawn(function()
+    sleep(1.5)
+    if alive and refreshVip then refreshVip(false, true) end
+  end)
 
   if not settings.lang then openLangPicker() end
 
