@@ -13,7 +13,7 @@ local S = G.__LOADSYS or {}
 G.__LOADSYS = S
 
 local BASE = "https://raw.githubusercontent.com/scptr1155-gif/loadsystem/refs/heads/main/"
-local NEED = "1.3"
+local NEED = "1.5"
 
 local function loadCore()
   if type(S.CORE) == "table" and S.CORE.version == NEED then return S.CORE end
@@ -31,7 +31,7 @@ local STR = {
     back = "← GERİ", title = "Studio", sub = "Sadece bu takma adla yayınladığın scriptler",
     loading = "Yükleniyor...", empty = "Bu takma adla henüz script yayınlamadın. CREATE ile ilk scriptini yayınla.",
     strip = "Yayınlanan: %d    ▶ %d    👍 %d    👎 %d", d_free = "Bugünkü yayın hakkın: VAR", d_used = "Bugünkü yayın hakkın: KULLANILDI",
-    edit = "DÜZENLE", f_name = "Script adı", f_image = "Resim ID (rbxassetid)", f_desc = "Açıklama",
+    edit = "DÜZENLE", f_name = "Script adı", f_image = "Resim ID (Decal / Texture / Image) — boşsa varsayılan", f_desc = "Açıklama",
     f_code = "Script kodu (Lua)", save = "KAYDET", cancel = "İPTAL", delete = "SİL", sure = "EMİN MİSİN?",
     saving = "KAYDEDİLİYOR", deleting = "SİLİNİYOR", ld_sub = "LÜTFEN BEKLE", code_loading = "-- kod yükleniyor...",
     bad_name = "Script adı 3-40 karakter olmalı.", bad_code = "Script kodu boş olamaz.",
@@ -42,7 +42,7 @@ local STR = {
     back = "← BACK", title = "Studio", sub = "Only scripts published with this nickname",
     loading = "Loading...", empty = "You haven't published anything with this nickname yet. Use CREATE to publish your first script.",
     strip = "Published: %d    ▶ %d    👍 %d    👎 %d", d_free = "Today's publish: AVAILABLE", d_used = "Today's publish: USED",
-    edit = "EDIT", f_name = "Script name", f_image = "Image ID (rbxassetid)", f_desc = "Description",
+    edit = "EDIT", f_name = "Script name", f_image = "Image ID (Decal / Texture / Image) — empty = default", f_desc = "Description",
     f_code = "Script code (Lua)", save = "SAVE", cancel = "CANCEL", delete = "DELETE", sure = "ARE YOU SURE?",
     saving = "SAVING", deleting = "DELETING", ld_sub = "PLEASE WAIT", code_loading = "-- loading code...",
     bad_name = "Script name must be 3-40 characters.", bad_code = "Script code cannot be empty.",
@@ -114,7 +114,8 @@ function M.open(ctx)
     ed.Visible = true
     u.title.Text = tostring(e.name or "?")
     fName.Text = tostring(e.name or "")
-    fImage.Text = (tonumber(e.image) and num(e.image) > 0) and tostring(math.floor(num(e.image))) or ""
+    -- varsayılan resmin ID'si alanda gösterilmez (sadece resim görünür)
+    fImage.Text = (tonumber(e.image) and num(e.image) > 0 and math.floor(num(e.image)) ~= core.DEFAULT_IMAGE) and tostring(math.floor(num(e.image))) or ""
     fDesc.Text = tostring(e.desc or "")
     fCode.Text = T("code_loading")
     spawn(function()
@@ -199,6 +200,7 @@ function M.open(ctx)
     busy = true
     u.loading(true, T("saving"), T("ld_sub"))
     spawn(function()
+      img = core.resolveImage(img)   -- decal -> resim, boşsa varsayılan
       -- 1) sahiplik kontrolü (takma ad) + bilgi güncelleme
       local ok, err = core.mutateIndex(function(idx)
         for _, x in ipairs(idx.scripts) do
